@@ -71,7 +71,7 @@ def plot_CSD(x: np.ndarray, y: np.ndarray, csd: np.ndarray, polytopesks: list[np
 
     return fig, ax
 
-def generate_dataset(K: int, x_vol: np.ndarray, y_vol: np.ndarray):
+def generate_dataset(K: int, x_vol: np.ndarray, y_vol: np.ndarray, ks: int=0):
     """
         Run the QDarts experiment for a given number of dots K and
           ranges of voltages to create needed data for CSD creation.
@@ -82,7 +82,7 @@ def generate_dataset(K: int, x_vol: np.ndarray, y_vol: np.ndarray):
     capacitance_config = {
         "C_DD" : C_DD,  #dot-dot capacitance matrix
         "C_Dg" : C_DG,  #dot-gate capacitance matrix
-        "ks" : 0,       
+        "ks" : ks,       
     }
 
     cuts = [[1,0],[0,1]]
@@ -94,7 +94,7 @@ def generate_dataset(K: int, x_vol: np.ndarray, y_vol: np.ndarray):
                                                 compute_polytopes = True,
                                                 use_virtual_gates = False)   
     
-    return C_DD, C_DG, cuts, xks, yks, csd_dataks, polytopesks
+    return C_DD, C_DG, ks, cuts, xks, yks, csd_dataks, polytopesks
 
 def count_directories_in_folder(K:int, path:str = PATH):
     """
@@ -152,17 +152,20 @@ def save_to_json(dictionary: dict):
         Save the datapoints to a json file.
     """      
     full_path_dps = os.path.join(PATH_DPS, 'datapoints.json')
+    
+    try:
+        if os.path.exists(full_path_dps):
+            with open(full_path_dps, 'r') as f:
+                data = json.load(f)
+            
+            data.update(dictionary)
+        else:
+            data = dictionary
 
-    if os.path.exists(full_path_dps):
-        with open(full_path_dps, 'r') as f:
-            data = json.load(f)
-        
-        data.update(dictionary)
-    else:
-        data = dictionary
-
-    with open(full_path_dps, 'w') as f:
-        json.dump(dictionary, f)
+        with open(full_path_dps, 'w') as f:
+            json.dump(dictionary, f)
+    except:
+        print("Json file no longer updated!")
 
 
 def save_to_hfd5(dictionary: dict):
@@ -185,12 +188,12 @@ def save_to_hfd5(dictionary: dict):
                     group = f.create_group(key)
                 
                 for sub_key, sub_value in value.items():
-                    if isinstance(sub_value, np.ndarray):
+                    if isinstance(sub_value, np.ndarray) or isinstance(sub_value, list):
                         if sub_key in group:
                             # Overwrite the existing dataset
                             del group[sub_key]  # Delete the existing dataset
                         group.create_dataset(sub_key, data=sub_value)
-                    else:
+                    elif isinstance(sub_value, int) or isinstance(sub_value, float):
                         # Overwrite or add new attribute
                         group.attrs[sub_key] = sub_value
             elif isinstance(value, np.ndarray):
@@ -203,29 +206,31 @@ def save_to_hfd5(dictionary: dict):
                 # Overwrite or add scalar values as attributes
                 f.attrs[key] = value
 
-def load_hfd5(K:int, batch:int, v:bool=False):
+def get_path_hfd5(K:int, batch_num:int, v:bool=False):
     """
         Load the datapoints from a hfd5 file.
         For know it is for testing and not yet finished.
     """
-    batch_name = 'batch-' + str(int(batch)) if batch <= count_directories_in_folder(K) else ValueError("Batch number is too high!")
+    batch_name = 'batch-' + str(int(batch_num)) if batch_num <= count_directories_in_folder(K) else ValueError("Batch number is too high!")
     full_path_dps = os.path.join(PATH, 'K-'+str(K), batch_name, 'datapoints.h5')
-    data_dict = {}
-    with h5py.File(full_path_dps, 'r') as f:
-        if v:
-            print("HDF5 file content:")
-            for key in f.keys():
-                print(f"Key: {key}, Data: {f[key][:] if isinstance(f[key], h5py.Dataset) else 'Group'}")
-            for attr_key, attr_value in f.attrs.items():
-                print(f"Attribute: {attr_key}, Value: {attr_value}")
-        else:
-            for dataset_name in f.keys():
-                data_dict[dataset_name] = f[dataset_name][:]
-   
-        return data_dict
+          
+    return full_path_dps
 
+def load_csd_img(K:int, batch_num:int, csd_name: str, show:bool=False):
+    """
+        Load the PNG file 
+    """
+    if not re.compile(r"\d.png").match(csd_name):
+        csd_name = csd_name + ".png"
 
-def save_datapoints(K, C_DD, C_DG, x_vol, y_vol, cuts, csd_plot):
+    path = os.path.join(PATH, 'K-'+str(K), 'batch-'+str(batch_num), 'imgs', csd_name)
+    img = Image.open(path)
+    if show:
+        img.show() 
+    
+    return img 
+
+def save_datapoints(K, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot):
     """
        Combine all 'saveing' function to create a datapoint containg an PNG image, 
        a new json instantce in the 'batch' datapoints.json file, as well as a new hfd5 
@@ -233,10 +238,10 @@ def save_datapoints(K, C_DD, C_DG, x_vol, y_vol, cuts, csd_plot):
 
        #TODO: should I save ks as well?
     """
-    create_paths(K)
+   
     # save img of CSD 
     fpi, img_name = save_img_csd(K, csd_plot)
-    
+   
     # save datapoints
     csd = Image.open(fpi)
     csd_tensor = torch.tensor(np.array(csd)).permute(2, 0, 1)
@@ -244,12 +249,15 @@ def save_datapoints(K, C_DD, C_DG, x_vol, y_vol, cuts, csd_plot):
     datapoints_dict = {img_name : {'K':K, 
                                    'C_DD':C_DD.tolist(), 
                                    'C_DG':C_DG.tolist(), 
+                                   'ks':ks,
                                    'x_vol':x_vol, 
                                    'y_vol':y_vol, 
                                    'cuts':cuts, 
                                    'csd':csd_tensor.tolist()}}
     save_to_json(datapoints_dict)
     
+    # img_name = img_name.split('.')[0]
+    datapoints_dict = {img_name:{k: np.array(v) if not isinstance(v, int) else v for (k,v) in datapoints_dict[img_name].items()}}
     save_to_hfd5(datapoints_dict)
 
 
@@ -257,8 +265,8 @@ def generate_and_save_datapoints(K, x_vol, y_vol):
     x_vol_range = (x_vol[-1], len(x_vol))
     y_vol_range = (y_vol[-1], len(y_vol))
 
-    C_DD, C_DG, cuts, x, y, csd, poly = generate_dataset(K, x_vol, y_vol)
+    C_DD, C_DG, ks, cuts, x, y, csd, poly = generate_dataset(K, x_vol, y_vol)
     
     fig, _ = plot_CSD(x, y, csd, poly)    
      
-    save_datapoints(K, C_DD, C_DG, x_vol_range, y_vol_range, cuts, fig)
+    save_datapoints(K, C_DD, C_DG, ks, x_vol_range, y_vol_range, cuts, fig)

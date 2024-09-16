@@ -11,6 +11,8 @@ def main():
     x_vol_range = (x_vol[-1], len(x_vol))
     y_vol_range = (y_vol[-1], len(y_vol))
 
+    ks = 0
+
     parser = argparse.ArgumentParser(description="Generating a dataset.")
 
     parser.add_argument('--N', type=np.int32, default=250, 
@@ -27,10 +29,11 @@ def main():
     K = args.K
 
     main_start = time.time()
+    u.create_paths(K)
     for i in range(N):
         print(f"Generating datapoint {i+1}/{N}:")
         try:
-            C_DD, C_DG, cuts, x, y, csd, poly =  u.generate_dataset(K, x_vol, y_vol)
+            C_DD, C_DG, ks, cuts, x, y, csd, poly =  u.generate_dataset(K, x_vol, y_vol, ks)
         except Exception as e:
             print(f"Execution failed! {e}")
         else:
@@ -38,7 +41,7 @@ def main():
             print(f"Succesfully generated datapoints: {suc}/{N} ({i+1}/{N}).\n\n")
             fig, _ = u.plot_CSD(x, y, csd, poly)    
      
-            u.save_datapoints(K, C_DD, C_DG, x_vol_range, y_vol_range, cuts, fig)
+            u.save_datapoints(K, C_DD, C_DG, ks, x_vol_range, y_vol_range, cuts, fig)
         # try:
         #     sys.stdout.write(f"Succesfully generated datapoints: {suc}/{N} ({i}/{N}).\n\n")
         #     s = time.time()
