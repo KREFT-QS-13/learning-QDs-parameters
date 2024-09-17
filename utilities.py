@@ -9,6 +9,7 @@ import torch
 
 import os
 import sys
+import shutil
 import re
 import h5py
 import json
@@ -34,12 +35,20 @@ def generate_capacitance_matrices(K: int) -> tuple[np.ndarray, np.ndarray]:
         The off-diagonal elements of C_DD and C_DG are drawn from a normal distribution 
         with a mean and standard deviation of 10% of mean.
     """
-    mean = 3 #aF
+    mean = 1 #aF
     std = 0.1*mean
-    C_DD, C_DG = np.random.normal(mean, std, (K,K)), np.random.normal(2*mean, std, (K,K))
-    for i in range(K):
-        C_DD[i,i] = np.random.normal(2*mean, std)
+    C_DD, C_DG = np.random.normal(mean, std, (K,K)), np.random.normal(mean, std, (K,K))
     
+    # diag_const = np.random.uniform(low=3, high=7)
+    diag_const = np.random.choice([3,5,7,9,12,13])
+    
+    for i in range(K):
+        C_DD[i,i] = np.random.normal(diag_const*mean, std)
+        C_DG[i,i] = np.random.normal(diag_const*mean, std)
+
+
+    C_DD = (C_DD + C_DD.T)/2
+
     return C_DD, C_DG
 
 def generate_dummy_data(K: int) -> tuple[np.ndarray, np.ndarray]:
@@ -105,6 +114,7 @@ def count_directories_in_folder(K:int, path:str = PATH):
 
     return sum(os.path.isdir(os.path.join(path, x)) for x in batch_list)
 
+
 def create_paths(K:int, path:str=PATH):
     """
         Creates paths for datapoints and images where the data will be saved.
@@ -126,6 +136,22 @@ def create_paths(K:int, path:str=PATH):
 
     PATH_IMG = full_path_img
     PATH_DPS = full_path_dps
+
+def clean_batch():
+    # if not os.path.isfile(PATH_IMG):
+    #     os.rmdir(PATH_IMG)
+    # else:
+    #     for f in os.listdir(PATH_IMG):
+    #         os.remove(os.path.join(PATH_IMG, f))
+        
+    #     os.rmdir(PATH_IMG)
+
+    if not os.path.isfile(PATH_DPS):
+        try:
+            shutil.rmtree(PATH_DPS)
+        except Exception as e:
+            print("Unable to clean empty batch folder!")
+            print(f'{e}')
 
 def save_img_csd(K, csd_plot):
     """
@@ -150,6 +176,7 @@ def save_img_csd(K, csd_plot):
 def save_to_json(dictionary: dict):
     """
         Save the datapoints to a json file.
+        # TODO: It only saves the last img -> fix it
     """      
     full_path_dps = os.path.join(PATH_DPS, 'datapoints.json')
     
@@ -157,25 +184,22 @@ def save_to_json(dictionary: dict):
         if os.path.exists(full_path_dps):
             with open(full_path_dps, 'r') as f:
                 data = json.load(f)
-            
-            data.update(dictionary)
         else:
-            data = dictionary
+            data = {}
+        data.update(dictionary)
 
         with open(full_path_dps, 'w') as f:
-            json.dump(dictionary, f)
-    except:
-        print("Json file no longer updated!")
+            json.dump(data, f)
+
+    except Exception as e:
+        print(f"Json file no longer updated!")
+        print(f"Error: {e}")
 
 
 def save_to_hfd5(dictionary: dict):
     """
         Save the datapoints to a hfd5 file.
     """
-    # TODO: Finish this function:
-    #  - use img id as key as save under the inside of nested dict 
-    #  - use the key of the inside dict as attributes
-
     full_path_dps = os.path.join(PATH_DPS, 'datapoints.h5')
 
     with h5py.File(full_path_dps, 'a') as f: 
@@ -211,7 +235,12 @@ def get_path_hfd5(K:int, batch_num:int, v:bool=False):
         Load the datapoints from a hfd5 file.
         For know it is for testing and not yet finished.
     """
-    batch_name = 'batch-' + str(int(batch_num)) if batch_num <= count_directories_in_folder(K) else ValueError("Batch number is too high!")
+    if batch_num <= count_directories_in_folder(K):
+        batch_name = 'batch-' + str(batch_num)
+    else:
+        print(ValueError(f"Batch number is too high! Max: {count_directories_in_folder(K)}!"))
+        return None
+
     full_path_dps = os.path.join(PATH, 'K-'+str(K), batch_name, 'datapoints.h5')
           
     return full_path_dps
@@ -220,7 +249,7 @@ def load_csd_img(K:int, batch_num:int, csd_name: str, show:bool=False):
     """
         Load the PNG file 
     """
-    if not re.compile(r"\d.png").match(csd_name):
+    if not re.compile(r"^\d+\.png$").match(csd_name):
         csd_name = csd_name + ".png"
 
     path = os.path.join(PATH, 'K-'+str(K), 'batch-'+str(batch_num), 'imgs', csd_name)
@@ -245,7 +274,8 @@ def save_datapoints(K, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot):
     # save datapoints
     csd = Image.open(fpi)
     csd_tensor = torch.tensor(np.array(csd)).permute(2, 0, 1)
-
+    
+    ks = np.nan if ks == None else ks
     datapoints_dict = {img_name : {'K':K, 
                                    'C_DD':C_DD.tolist(), 
                                    'C_DG':C_DG.tolist(), 
@@ -254,7 +284,7 @@ def save_datapoints(K, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot):
                                    'y_vol':y_vol, 
                                    'cuts':cuts, 
                                    'csd':csd_tensor.tolist()}}
-    save_to_json(datapoints_dict)
+    # save_to_json(datapoints_dict)
     
     # img_name = img_name.split('.')[0]
     datapoints_dict = {img_name:{k: np.array(v) if not isinstance(v, int) else v for (k,v) in datapoints_dict[img_name].items()}}

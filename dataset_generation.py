@@ -5,13 +5,13 @@ import sys, time
 import utilities as u
 
 def main():
-    x_vol = np.linspace(0, 0.05, 500)
-    y_vol = np.linspace(0, 0.05, 500)
+    x_vol = np.linspace(0, 0.1, 500)
+    y_vol = np.linspace(0, 0.1, 500)
 
     x_vol_range = (x_vol[-1], len(x_vol))
     y_vol_range = (y_vol[-1], len(y_vol))
 
-    ks = 0
+    ks = None
 
     parser = argparse.ArgumentParser(description="Generating a dataset.")
 
@@ -32,15 +32,21 @@ def main():
     u.create_paths(K)
     for i in range(N):
         print(f"Generating datapoint {i+1}/{N}:")
+        # C_DD, C_DG, ks, cuts, x, y, csd, poly =  u.generate_dataset(K, x_vol, y_vol, ks)
+        # fig, _ = u.plot_CSD(x, y, csd, poly)    
+     
+        # u.save_datapoints(K, C_DD, C_DG, ks, x_vol_range, y_vol_range, cuts, fig)
         try:
             C_DD, C_DG, ks, cuts, x, y, csd, poly =  u.generate_dataset(K, x_vol, y_vol, ks)
         except Exception as e:
-            print(f"Execution failed! {e}")
+            # u.clean_batch() # TODO: Figure this out
+            print(f"Execution failed!")
+            print(f"Error: {e}")
         else:
             suc+=1
             print(f"Succesfully generated datapoints: {suc}/{N} ({i+1}/{N}).\n\n")
             fig, _ = u.plot_CSD(x, y, csd, poly)    
-     
+
             u.save_datapoints(K, C_DD, C_DG, ks, x_vol_range, y_vol_range, cuts, fig)
         # try:
         #     sys.stdout.write(f"Succesfully generated datapoints: {suc}/{N} ({i}/{N}).\n\n")

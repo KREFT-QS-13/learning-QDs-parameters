@@ -175,8 +175,8 @@ class Model(BaseCapacitanceModel):
         self.ks = ks
         if ks is not None:
             self.ks = np.array(ks)
-            #if np.any(ks<1):
-            #    raise ValueError("The ks values must be larger than 1")
+            if np.any(ks<1):
+               raise ValueError("The ks values must be larger or equal to 1.")
          
             # TODO: What are S values?
             # Cache S values for up to 1000 total dots 
