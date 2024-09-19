@@ -5,8 +5,8 @@ import sys, time
 import utilities as u
 
 def main():
-    x_vol = np.linspace(0, 0.1, 500)
-    y_vol = np.linspace(0, 0.1, 500)
+    x_vol = np.linspace(0, 0.05, 500)
+    y_vol = np.linspace(0, 0.05, 500)
 
     x_vol_range = (x_vol[-1], len(x_vol))
     y_vol_range = (y_vol[-1], len(y_vol))

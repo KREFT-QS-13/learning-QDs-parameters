@@ -3,6 +3,7 @@ import random
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
+
 from PIL import Image
 import torchvision.transforms as transforms
 import torch
@@ -19,6 +20,8 @@ from experiment import Experiment
 from plotting import plot_polytopes
 
 PATH = "./datasets/"
+DPI = 100
+RESOLUTION = 256
 
 
 mpl.rcParams["savefig.bbox"] = 'tight'
@@ -35,17 +38,22 @@ def generate_capacitance_matrices(K: int) -> tuple[np.ndarray, np.ndarray]:
         The off-diagonal elements of C_DD and C_DG are drawn from a normal distribution 
         with a mean and standard deviation of 10% of mean.
     """
-    mean = 1 #aF
-    std = 0.1*mean
+    mean = 1.0 #aF
+    std = 0.15
     C_DD, C_DG = np.random.normal(mean, std, (K,K)), np.random.normal(mean, std, (K,K))
     
     # diag_const = np.random.uniform(low=3, high=7)
-    diag_const = np.random.choice([3,5,7,9,12,13])
+    diag_const = np.random.choice([2,3,5,7,9,11,13,15,17,21,25,30])
     
     for i in range(K):
-        C_DD[i,i] = np.random.normal(diag_const*mean, std)
-        C_DG[i,i] = np.random.normal(diag_const*mean, std)
+        C_DD[i,i] = np.random.normal(diag_const*mean, diag_const*std)
+        C_DG[i,i] = np.random.normal(diag_const*mean, diag_const*std)
 
+
+        # if we want to keep similiar magnitude on both dot-dot capacitance 
+        # C_DD[i,i] = np.random.normal(diag_const*mean, std)
+        # C_DG[i,i] = np.random.normal(diag_const*mean, std)
+        # coin filp: between those two
 
     C_DD = (C_DD + C_DD.T)/2
 
@@ -64,7 +72,7 @@ def generate_cuts(K: int):
     #TODO: Wirte a function that based on K dots will generate \biom{K}{2} diffrent cuts
     pass
 
-def plot_CSD(x: np.ndarray, y: np.ndarray, csd: np.ndarray, polytopesks: list[np.ndarray], res:int=256, dpi:int=100):
+def plot_CSD(x: np.ndarray, y: np.ndarray, csd: np.ndarray, polytopesks: list[np.ndarray], res:int=RESOLUTION, dpi:int=DPI):
     """
         Plot the charge stability diagram (CSD) (res by res, default 256 by 256).
     """
@@ -230,35 +238,57 @@ def save_to_hfd5(dictionary: dict):
                 # Overwrite or add scalar values as attributes
                 f.attrs[key] = value
 
+def get_batch_folder_name(K:int, batch_num:int):
+    if batch_num <= count_directories_in_folder(K):
+        return 'batch-' + str(batch_num)
+    else:
+        print(ValueError(f"Batch number is too high! Max: {count_directories_in_folder(K)}!"))
+        return None
+
 def get_path_hfd5(K:int, batch_num:int, v:bool=False):
     """
         Load the datapoints from a hfd5 file.
         For know it is for testing and not yet finished.
     """
-    if batch_num <= count_directories_in_folder(K):
-        batch_name = 'batch-' + str(batch_num)
-    else:
-        print(ValueError(f"Batch number is too high! Max: {count_directories_in_folder(K)}!"))
-        return None
+    batch_name = get_batch_folder_name(K, batch_num)
 
     full_path_dps = os.path.join(PATH, 'K-'+str(K), batch_name, 'datapoints.h5')
           
     return full_path_dps
 
+def check_and_correct_img_name(img_name: str):
+    if not re.compile(r"^\d+\.png$").match(img_name):
+        return img_name + ".png"
+    else:
+        return img_name
+
 def load_csd_img(K:int, batch_num:int, csd_name: str, show:bool=False):
     """
         Load the PNG file 
     """
-    if not re.compile(r"^\d+\.png$").match(csd_name):
-        csd_name = csd_name + ".png"
-
-    path = os.path.join(PATH, 'K-'+str(K), 'batch-'+str(batch_num), 'imgs', csd_name)
+    csd_name =  check_and_correct_img_name(csd_name)
+    path = os.path.join(PATH, 'K-'+str(K), get_batch_folder_name(K, batch_num), 'imgs', csd_name)
+    
     img = Image.open(path)
     if show:
         img.show() 
     
     return img 
 
+def reconstruct_img_with_matrices(K:int, batch_num:int, img_name:str, show:bool = False):
+    img_name = check_and_correct_img_name(img_name)
+    path = get_path_hfd5(K, batch_num)
+
+    with h5py.File(path, 'r') as f:
+        img = f[img_name]['csd'][:]
+        C_DD = f[img_name]['C_DD'][:]
+        C_DG = f[img_name]['C_DG'][:]
+        
+        img = plt.imshow(np.transpose(img, (1, 2, 0)))
+        plt.axis('off')
+
+        return img, C_DD, C_DG
+    
 def save_datapoints(K, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot):
     """
        Combine all 'saveing' function to create a datapoint containg an PNG image, 
