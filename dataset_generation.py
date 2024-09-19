@@ -1,6 +1,7 @@
 import argparse
 import numpy as np
 import sys, time
+import multiprocessing as mp
 
 import utilities as u
 
@@ -24,50 +25,30 @@ def main():
     # parser.add_argument('--Noise', type=, help='')
 
     args = parser.parse_args()
-    suc = 0
     N = args.N
     K = args.K
 
     main_start = time.time()
     u.create_paths(K)
-    for i in range(N):
-        print(f"Generating datapoint {i+1}/{N}:")
-        # C_DD, C_DG, ks, cuts, x, y, csd, poly =  u.generate_dataset(K, x_vol, y_vol, ks)
-        # fig, _ = u.plot_CSD(x, y, csd, poly)    
-     
-        # u.save_datapoints(K, C_DD, C_DG, ks, x_vol_range, y_vol_range, cuts, fig)
-        try:
-            C_DD, C_DG, ks, cuts, x, y, csd, poly =  u.generate_dataset(K, x_vol, y_vol, ks)
-        except Exception as e:
-            # u.clean_batch() # TODO: Figure this out
-            print(f"Execution failed!")
-            print(f"Error: {e}")
-        else:
-            suc+=1
-            print(f"Succesfully generated datapoints: {suc}/{N} ({i+1}/{N}).\n\n")
-            fig, _ = u.plot_CSD(x, y, csd, poly)    
 
+    # Prepare arguments for multiprocessing
+    pool_args = [(K, x_vol, y_vol, ks, i, N) for i in range(N)]
+    
+    # Create a multiprocessing pool
+    with mp.Pool(processes=mp.cpu_count()) as pool:
+        results = pool.map(u.generate_datapoint, pool_args)
+
+    suc = 0
+    for i, result in enumerate(results):
+        if result is not None:
+            suc += 1
+            C_DD, C_DG, ks, cuts, x_vol, y_vol, fig = result
             u.save_datapoints(K, C_DD, C_DG, ks, x_vol_range, y_vol_range, cuts, fig)
-        # try:
-        #     sys.stdout.write(f"Succesfully generated datapoints: {suc}/{N} ({i}/{N}).\n\n")
-        #     s = time.time()
-        #     u.generate_and_save_datapoints(K, x_vol, y_vol)
-        #     e = time.time()
-        #     suc+=1
-        #     sys.stdout.write(f"Last succesful generation took: {(e-s):.3f}[s].")
-        #     time.sleep(1)
-        #     sys.stdout.flush()
-        # except Exception as e:
-        #     sys.stdout.write(f"\n\r Execution failed: {e}", end='\r', flush=True)
-        #     sys.stdout.flush()
-        
-        
+            print(f"Successfully generated datapoints: {suc}/{N} ({i+1}/{N}).\n\n")
 
-    main_end = time.time()
-    print(f"\nTotal time: {np.abs(main_start-main_end):.3f}[s] -> {np.abs(main_start-main_end)/N:.3f}[s] per datapoint.")    
-    sys.stdout.write(f"Succesfully generated datapoints: {suc}/{N}.\n\n")
-    # dict = u.load_hfd5()
-    # print(dict.keys())
-
+    final_time = round(np.abs(main_start-time.time()),3)
+    print(f"\nTotal time: {final_time}[s] -> {(final_time/N):.3f}[s] per datapoint.")    
+    print(f"Successfully generated datapoints: {suc}/{N}.\n\n")
+        
 if __name__ == "__main__":
     main()

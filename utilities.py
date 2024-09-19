@@ -1,8 +1,8 @@
 import numpy as np
 import random
 import matplotlib as mpl
+mpl.use('Agg')  # Use the 'Agg' backend which is thread-safe
 import matplotlib.pyplot as plt
-
 
 from PIL import Image
 import torchvision.transforms as transforms
@@ -23,10 +23,8 @@ PATH = "./datasets/"
 DPI = 100
 RESOLUTION = 256
 
-
-mpl.rcParams["savefig.bbox"] = 'tight'
-mpl.rcParams["savefig.pad_inches"] = 0
-mpl.rcParams["savefig.dpi"] = 100
+def draw_digonal_elemnts(K:int, C_DD:np.ndarray, C_DG):
+    pass
 
 def generate_capacitance_matrices(K: int) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -43,14 +41,15 @@ def generate_capacitance_matrices(K: int) -> tuple[np.ndarray, np.ndarray]:
     C_DD, C_DG = np.random.normal(mean, std, (K,K)), np.random.normal(mean, std, (K,K))
     
     # diag_const = np.random.uniform(low=3, high=7)
-    diag_const = np.random.choice([2,3,5,7,9,11,13,15,17,21,25,30])
-    
+    diag_const = np.random.choice([2,3,5,7,9,11,13,15,17,21])
+
     for i in range(K):
         C_DD[i,i] = np.random.normal(diag_const*mean, diag_const*std)
         C_DG[i,i] = np.random.normal(diag_const*mean, diag_const*std)
 
 
         # if we want to keep similiar magnitude on both dot-dot capacitance 
+    # for i in range(K):
         # C_DD[i,i] = np.random.normal(diag_const*mean, std)
         # C_DG[i,i] = np.random.normal(diag_const*mean, std)
         # coin filp: between those two
@@ -76,7 +75,8 @@ def plot_CSD(x: np.ndarray, y: np.ndarray, csd: np.ndarray, polytopesks: list[np
     """
         Plot the charge stability diagram (CSD) (res by res, default 256 by 256).
     """
-    fig, ax = plt.subplots(figsize=(res/dpi, res/dpi), dpi=dpi)
+    plt.figure(figsize=(res/dpi, res/dpi), dpi=dpi)
+    ax = plt.gca()
 
     ax.pcolormesh(1e3*x, 1e3*y, csd) #plot the background
     plot_polytopes(ax, polytopesks, axes_rescale=1e3, only_edges=True) #plot the polytopes
@@ -86,7 +86,7 @@ def plot_CSD(x: np.ndarray, y: np.ndarray, csd: np.ndarray, polytopesks: list[np
     ax.axis('off')
     plt.tight_layout(pad=0)
 
-    return fig, ax
+    return plt.gcf(), ax
 
 def generate_dataset(K: int, x_vol: np.ndarray, y_vol: np.ndarray, ks: int=0):
     """
@@ -163,21 +163,24 @@ def clean_batch():
 
 def save_img_csd(K, csd_plot):
     """
-        Save the CSD image as an PNG file with the 'unique' name.
-        (There might be problem with uniqness for more datapoint. However
-        the batch approach would solve it)
+        Save the CSD image as a PNG file with a 'unique' name.
     """
     img_name = ''.join([str(random.randint(0, 9)) for _ in range(10)])+'.png'
 
     full_path_img = os.path.join(PATH_IMG, img_name)
     
-    csd_plot.savefig(full_path_img, format='png') 
+    csd_plot.savefig(full_path_img, 
+                     format='png', 
+                     bbox_inches='tight', 
+                     pad_inches=0, 
+                     dpi=DPI)
+    
     plt.close(csd_plot)
     
     return full_path_img, img_name
 
 # TODO: Figure out how to save the data in multiple files after 500 datapoints generation
-#     - thats for safty 
+#     - thats for safety 
 #     - also start thinking how you will orgenize for more datapoints with bigger K
 #     - for bigger K -> 10 000 datapoints -> \biom{K}{2} * 10 0000 real datapoints ?
 #     - how about the philosophy: you generate to learn (?)
@@ -294,8 +297,6 @@ def save_datapoints(K, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot):
        Combine all 'saveing' function to create a datapoint containg an PNG image, 
        a new json instantce in the 'batch' datapoints.json file, as well as a new hfd5 
        instantce in the 'batch' datapoints.h5 file.
-
-       #TODO: should I save ks as well?
     """
    
     # save img of CSD 
@@ -307,26 +308,26 @@ def save_datapoints(K, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot):
     
     ks = np.nan if ks == None else ks
     datapoints_dict = {img_name : {'K':K, 
-                                   'C_DD':C_DD.tolist(), 
-                                   'C_DG':C_DG.tolist(), 
+                                   'C_DD':C_DD, 
+                                   'C_DG':C_DG, 
                                    'ks':ks,
                                    'x_vol':x_vol, 
                                    'y_vol':y_vol, 
                                    'cuts':cuts, 
-                                   'csd':csd_tensor.tolist()}}
+                                   'csd':csd_tensor}} # 8 elements
     # save_to_json(datapoints_dict)
     
-    # img_name = img_name.split('.')[0]
-    datapoints_dict = {img_name:{k: np.array(v) if not isinstance(v, int) else v for (k,v) in datapoints_dict[img_name].items()}}
     save_to_hfd5(datapoints_dict)
 
 
-def generate_and_save_datapoints(K, x_vol, y_vol):
-    x_vol_range = (x_vol[-1], len(x_vol))
-    y_vol_range = (y_vol[-1], len(y_vol))
-
-    C_DD, C_DG, ks, cuts, x, y, csd, poly = generate_dataset(K, x_vol, y_vol)
-    
-    fig, _ = plot_CSD(x, y, csd, poly)    
-     
-    save_datapoints(K, C_DD, C_DG, ks, x_vol_range, y_vol_range, cuts, fig)
+def generate_datapoint(args):
+    K, x_vol, y_vol, ks, i, N = args
+    print(f"Generating datapoint {i+1}/{N}:")
+    try:
+        C_DD, C_DG, ks, cuts, x, y, csd, poly = generate_dataset(K, x_vol, y_vol, ks)
+        fig, _ = plot_CSD(x, y, csd, poly)
+        return (C_DD, C_DG, ks, cuts, x_vol, y_vol, fig)
+    except Exception as e:
+        print(f"Execution failed for datapoint {i+1}!")
+        print(f"Error: {e}")
+        return None
