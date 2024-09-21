@@ -37,7 +37,7 @@ def generate_capacitance_matrices(K: int) -> tuple[np.ndarray, np.ndarray]:
         with a mean and standard deviation of 10% of mean.
     """
     mean = 1.0 #aF
-    std = 0.15
+    std = 0.05
     C_DD, C_DG = np.random.normal(mean, std, (K,K)), np.random.normal(mean, std, (K,K))
     
     # diag_const = np.random.uniform(low=3, high=7)
@@ -209,37 +209,27 @@ def save_to_json(dictionary: dict):
 
 def save_to_hfd5(dictionary: dict):
     """
-        Save the datapoints to a hfd5 file.
+    Save the datapoints to an HDF5 file.
     """
     full_path_dps = os.path.join(PATH_DPS, 'datapoints.h5')
 
-    with h5py.File(full_path_dps, 'a') as f: 
+    with h5py.File(full_path_dps, 'a') as f:
         for key, value in dictionary.items():
-            if isinstance(value, dict):
-                # Handle nested dictionaries by updating or creating groups
-                if key in f:
-                    raise ValueError("Key already exists!")
+            if key in f:
+                del f[key]  # Delete existing group if it exists
+            group = f.create_group(key)
+            
+            for sub_key, sub_value in value.items():
+                if isinstance(sub_value, (np.ndarray, list, torch.Tensor)):
+                    if isinstance(sub_value, torch.Tensor):
+                        sub_value = sub_value.numpy()
+                    group.create_dataset(sub_key, data=sub_value)
+                elif isinstance(sub_value, (int, float, str)):
+                    group.attrs[sub_key] = sub_value
+                elif sub_value is None or np.isnan(sub_value):
+                    group.attrs[sub_key] = 'NaN'
                 else:
-                    group = f.create_group(key)
-                
-                for sub_key, sub_value in value.items():
-                    if isinstance(sub_value, np.ndarray) or isinstance(sub_value, list):
-                        if sub_key in group:
-                            # Overwrite the existing dataset
-                            del group[sub_key]  # Delete the existing dataset
-                        group.create_dataset(sub_key, data=sub_value)
-                    elif isinstance(sub_value, int) or isinstance(sub_value, float):
-                        # Overwrite or add new attribute
-                        group.attrs[sub_key] = sub_value
-            elif isinstance(value, np.ndarray):
-                # Update or add new NumPy arrays as datasets
-                if key in f:
-                    # Overwrite the existing dataset
-                    del f[key]  # Delete the existing dataset
-                f.create_dataset(key, data=value)
-            else:
-                # Overwrite or add scalar values as attributes
-                f.attrs[key] = value
+                    print(f"Unsupported type for {sub_key}: {type(sub_value)}")
 
 def get_batch_folder_name(K:int, batch_num:int):
     if batch_num <= count_directories_in_folder(K):
@@ -286,10 +276,19 @@ def reconstruct_img_with_matrices(K:int, batch_num:int, img_name:str, show:bool 
         img = f[img_name]['csd'][:]
         C_DD = f[img_name]['C_DD'][:]
         C_DG = f[img_name]['C_DG'][:]
-        
-        img = plt.imshow(np.transpose(img, (1, 2, 0)))
+
+        img = Image.fromarray((img.transpose(1, 2, 0)))
         plt.axis('off')
 
+        if show:
+            img.show()
+            print(img)
+            
+            print("C_DD matrix:")
+            print(C_DD)
+            print("\nC_DG matrix:")
+            print(C_DG)
+        
         return img, C_DD, C_DG
     
 def save_datapoints(K, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot):
@@ -306,16 +305,17 @@ def save_datapoints(K, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot):
     csd = Image.open(fpi)
     csd_tensor = torch.tensor(np.array(csd)).permute(2, 0, 1)
     
-    ks = np.nan if ks == None else ks
-    datapoints_dict = {img_name : {'K':K, 
-                                   'C_DD':C_DD, 
-                                   'C_DG':C_DG, 
-                                   'ks':ks,
-                                   'x_vol':x_vol, 
-                                   'y_vol':y_vol, 
-                                   'cuts':cuts, 
-                                   'csd':csd_tensor}} # 8 elements
-    # save_to_json(datapoints_dict)
+    ks = np.nan if ks is None else ks
+    datapoints_dict = {img_name: {
+        'K': K, 
+        'C_DD': C_DD, 
+        'C_DG': C_DG, 
+        'ks': ks,
+        'x_vol': np.array(x_vol), 
+        'y_vol': np.array(y_vol), 
+        'cuts': np.array(cuts), 
+        'csd': csd_tensor
+    }}
     
     save_to_hfd5(datapoints_dict)
 
