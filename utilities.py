@@ -37,15 +37,23 @@ def generate_capacitance_matrices(K: int) -> tuple[np.ndarray, np.ndarray]:
         with a mean and standard deviation of 10% of mean.
     """
     mean = 1.0 #aF
-    std = 0.05
+    std = 0.22
     C_DD, C_DG = np.random.normal(mean, std, (K,K)), np.random.normal(mean, std, (K,K))
     
     # diag_const = np.random.uniform(low=3, high=7)
-    diag_const = np.random.choice([2,3,5,7,9,11,13,15,17,21])
+    # diag_const = np.random.choice([2,3,5,7,9,11,13,15,17,21,25,30])
+    # diag_const = np.random.choice([2,3,5,7,9,11,12,15,17,21,31,43])
+    # diag_const_1 = np.random.choice([3,3.5,4,4.5,5,6,7,8,9,11,13,15,17,18,20,22,25])
+    # diag_const_2 = np.random.choice([3,3.5,4,5,7,8,9,10,13,14,15,16,17,18,20])
+    # diag_const = np.random.choice(np.linspace(3,27,25))
+    # diag_const = np.random.choice([5,10,15,20,25,30,35,40,45,50])
+
+    diag_const_1 = np.random.choice([4.5,5,6,7,8,9,11,13,15])
+    diag_const_2 = np.random.choice([3.5,4,5,7,9,10,13,14,15,16,17])
 
     for i in range(K):
-        C_DD[i,i] = np.random.normal(diag_const*mean, diag_const*std)
-        C_DG[i,i] = np.random.normal(diag_const*mean, diag_const*std)
+        C_DD[i,i] = np.random.normal(diag_const_1*mean, diag_const_1*std)
+        C_DG[i,i] = np.random.normal(diag_const_2*mean, diag_const_2*std)
 
 
         # if we want to keep similiar magnitude on both dot-dot capacitance 
@@ -64,12 +72,17 @@ def generate_dummy_data(K: int) -> tuple[np.ndarray, np.ndarray]:
     """
     return np.identity(K), np.identity(K)
 
-def generate_cuts(K: int):
+def get_cut(K: int):
     """
         Generate all possible cuts multidimensional volatge space based on the number of dots K.
     """
-    #TODO: Wirte a function that based on K dots will generate \biom{K}{2} diffrent cuts
-    pass
+    #TODO: Wirte a function that based on K dots will generate diffrent cuts
+    c = [[1,0],[0,1]]
+    # c =  [[1,1],[1,-1]]
+    # c = [[1,0],[1,-0.5]]
+    # c = [[1,-1],[1,1]]
+    return c
+    
 
 def plot_CSD(x: np.ndarray, y: np.ndarray, csd: np.ndarray, polytopesks: list[np.ndarray], res:int=RESOLUTION, dpi:int=DPI):
     """
@@ -102,7 +115,7 @@ def generate_dataset(K: int, x_vol: np.ndarray, y_vol: np.ndarray, ks: int=0):
         "ks" : ks,       
     }
 
-    cuts = [[1,0],[0,1]]
+    cuts = get_cut(K)
 
     xks, yks, csd_dataks, polytopesks, _, _ =  Experiment(capacitance_config).generate_CSD(
                                                 x_voltages = x_vol,  #V
@@ -315,7 +328,7 @@ def save_datapoints(K, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot):
         'y_vol': np.array(y_vol), 
         'cuts': np.array(cuts), 
         'csd': csd_tensor
-    }}
+    }} # 8 elements
     
     save_to_hfd5(datapoints_dict)
 

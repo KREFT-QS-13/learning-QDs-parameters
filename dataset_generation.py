@@ -17,7 +17,10 @@ def main():
     parser = argparse.ArgumentParser(description="Generating a dataset.")
 
     parser.add_argument('--N', type=np.int32, default=250, 
-                        help='The number of datapoints to generate. Default vaule 250.')
+                        help='The size of a single batch of data. Default vaule 250.')
+    
+    parser.add_argument('--R', type=np.int32, default=1, 
+                        help='The number of batches to to generate. Default vaule 1.')
     
     parser.add_argument('--K', type=np.int32, default=2, 
                         help='The number of quantum dots in the system. Default vaule 2.')
@@ -26,29 +29,31 @@ def main():
 
     args = parser.parse_args()
     N = args.N
+    R = args.R
     K = args.K
 
-    main_start = time.time()
-    u.create_paths(K)
+    for r in range(R):
+        print(f"Batch number: {r+1}/{R}.")
+        main_start = time.time()
+        u.create_paths(K)
+        # Prepare arguments for multiprocessing
+        pool_args = [(K, x_vol, y_vol, ks, i, N) for i in range(N)]
+        
+        # Create a multiprocessing pool
+        with mp.Pool(processes=mp.cpu_count()) as pool:
+            results = pool.map(u.generate_datapoint, pool_args)
 
-    # Prepare arguments for multiprocessing
-    pool_args = [(K, x_vol, y_vol, ks, i, N) for i in range(N)]
-    
-    # Create a multiprocessing pool
-    with mp.Pool(processes=mp.cpu_count()) as pool:
-        results = pool.map(u.generate_datapoint, pool_args)
+        suc = 0
+        for i, result in enumerate(results):
+            if result is not None:
+                suc += 1
+                C_DD, C_DG, ks, cuts, x_vol, y_vol, fig = result
+                u.save_datapoints(K, C_DD, C_DG, ks, x_vol_range, y_vol_range, cuts, fig)
+                print(f"Successfully generated datapoints: {suc}/{N} ({i+1}/{N}).\n\n")
 
-    suc = 0
-    for i, result in enumerate(results):
-        if result is not None:
-            suc += 1
-            C_DD, C_DG, ks, cuts, x_vol, y_vol, fig = result
-            u.save_datapoints(K, C_DD, C_DG, ks, x_vol_range, y_vol_range, cuts, fig)
-            print(f"Successfully generated datapoints: {suc}/{N} ({i+1}/{N}).\n\n")
-
-    final_time = round(np.abs(main_start-time.time()),3)
-    print(f"\nTotal time: {final_time}[s] -> {(final_time/N):.3f}[s] per datapoint.")    
-    print(f"Successfully generated datapoints: {suc}/{N}.\n\n")
+        final_time = round(np.abs(main_start-time.time()),3)
+        print(f"\nTotal time: {final_time}[s] -> {(final_time/N):.3f}[s] per datapoint.")    
+        print(f"Successfully generated datapoints: {suc}/{N}.\n\n")
         
 if __name__ == "__main__":
     main()
