@@ -3,7 +3,7 @@ import numpy as np
 import sys, time
 import multiprocessing as mp
 
-import utilities as u
+import utilities.utils as u
 
 def main():
     x_vol = np.linspace(0, 0.05, 500)

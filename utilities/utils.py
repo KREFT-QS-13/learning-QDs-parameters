@@ -16,12 +16,17 @@ import h5py
 import json
 
 sys.path.append('./qdarts')
-from experiment import Experiment
-from plotting import plot_polytopes
+from qdarts.experiment import Experiment
+from qdarts.plotting import plot_polytopes
 
-PATH = "./datasets/"
-DPI = 100
-RESOLUTION = 256
+# import learning_parameters.config as config
+
+import config
+PATH = config.PATH
+
+DPI = config.DPI
+RESOLUTION = config.RESOLUTION
+
 
 def draw_digonal_elemnts(K:int, C_DD:np.ndarray, C_DG):
     pass
@@ -37,7 +42,7 @@ def generate_capacitance_matrices(K: int) -> tuple[np.ndarray, np.ndarray]:
         with a mean and standard deviation of 10% of mean.
     """
     mean = 1.0 #aF
-    std = 0.22
+    std = 0.15
     C_DD, C_DG = np.random.normal(mean, std, (K,K)), np.random.normal(mean, std, (K,K))
     
     # diag_const = np.random.uniform(low=3, high=7)
@@ -48,8 +53,8 @@ def generate_capacitance_matrices(K: int) -> tuple[np.ndarray, np.ndarray]:
     # diag_const = np.random.choice(np.linspace(3,27,25))
     # diag_const = np.random.choice([5,10,15,20,25,30,35,40,45,50])
 
-    diag_const_1 = np.random.choice([4.5,5,6,7,8,9,11,13,15])
-    diag_const_2 = np.random.choice([3.5,4,5,7,9,10,13,14,15,16,17])
+    diag_const_1 = np.random.choice([4.5,5,6,7,8,9,11,13,15,17,18,20,22,25,30])
+    diag_const_2 = np.random.choice([3.5,4,5,7,9,10,13,14,15,16,17,18,20])
 
     for i in range(K):
         C_DD[i,i] = np.random.normal(diag_const_1*mean, diag_const_1*std)
@@ -145,7 +150,11 @@ def create_paths(K:int, path:str=PATH):
 
     batch_name = 'batch-' + str(count_directories_in_folder(K)+1)
     
-    full_path = os.path.join(PATH, 'K-'+str(K), batch_name)
+    full_path = os.path.join(PATH, 
+                             'K-'+str(K),
+                             str(RESOLUTION)+'x'+str(RESOLUTION),
+                             batch_name)
+    
     if not os.path.exists(full_path):
         os.makedirs(full_path)
     
