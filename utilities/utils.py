@@ -21,11 +21,12 @@ from qdarts.plotting import plot_polytopes
 
 # import learning_parameters.config as config
 
-import config
+import utilities.config as config
 PATH = config.PATH
 
 DPI = config.DPI
 RESOLUTION = config.RESOLUTION
+K = config.K
 
 
 def draw_digonal_elemnts(K:int, C_DD:np.ndarray, C_DG):
@@ -42,7 +43,7 @@ def generate_capacitance_matrices(K: int) -> tuple[np.ndarray, np.ndarray]:
         with a mean and standard deviation of 10% of mean.
     """
     mean = 1.0 #aF
-    std = 0.15
+    std = 0.2
     C_DD, C_DG = np.random.normal(mean, std, (K,K)), np.random.normal(mean, std, (K,K))
     
     # diag_const = np.random.uniform(low=3, high=7)
@@ -53,12 +54,17 @@ def generate_capacitance_matrices(K: int) -> tuple[np.ndarray, np.ndarray]:
     # diag_const = np.random.choice(np.linspace(3,27,25))
     # diag_const = np.random.choice([5,10,15,20,25,30,35,40,45,50])
 
-    diag_const_1 = np.random.choice([4.5,5,6,7,8,9,11,13,15,17,18,20,22,25,30])
-    diag_const_2 = np.random.choice([3.5,4,5,7,9,10,13,14,15,16,17,18,20])
-
+    # diag_const = np.random.choice([5,6,7,8,9,11,13,15,17,20,22,25])
+    # diag_const_2 = np.random.choice([6,7,9,10,13,14,16,17,18])
+   
     for i in range(K):
-        C_DD[i,i] = np.random.normal(diag_const_1*mean, diag_const_1*std)
-        C_DG[i,i] = np.random.normal(diag_const_2*mean, diag_const_2*std)
+        if random.random() < 0.5:
+            diag_const = np.random.choice([6,7,8,9,11,13])
+        else:
+            diag_const = np.random.choice([15,17])
+        
+        C_DD[i,i] = np.random.normal(diag_const*mean, diag_const*std)
+        C_DG[i,i] = np.random.normal(diag_const*mean, diag_const*std)
 
 
         # if we want to keep similiar magnitude on both dot-dot capacitance 
@@ -71,7 +77,7 @@ def generate_capacitance_matrices(K: int) -> tuple[np.ndarray, np.ndarray]:
 
     return C_DD, C_DG
 
-def generate_dummy_data(K: int) -> tuple[np.ndarray, np.ndarray]:
+def generate_dummy_data(K:int) -> tuple[np.ndarray, np.ndarray]:
     """
         Generate dummy (identity matrix) capacitance matrices for a given number of dots K.
     """
@@ -131,14 +137,13 @@ def generate_dataset(K: int, x_vol: np.ndarray, y_vol: np.ndarray, ks: int=0):
     
     return C_DD, C_DG, ks, cuts, xks, yks, csd_dataks, polytopesks
 
-def count_directories_in_folder(K:int, path:str = PATH):
+def count_directories_in_folder():
     """
         Count the number of batch directories in a given folder.
     """
-    path = os.path.join(path, 'K-'+str(K))
-    batch_list = [x for x in os.listdir(path) if re.compile(r"batch-\d").match(x)] 
+    batch_list = [x for x in os.listdir(PATH) if re.compile(r"batch-\d").match(x)] 
 
-    return sum(os.path.isdir(os.path.join(path, x)) for x in batch_list)
+    return sum(os.path.isdir(os.path.join(PATH, x)) for x in batch_list)
 
 
 def create_paths(K:int, path:str=PATH):
@@ -147,13 +152,10 @@ def create_paths(K:int, path:str=PATH):
     """
     global PATH_IMG
     global PATH_DPS
-
-    batch_name = 'batch-' + str(count_directories_in_folder(K)+1)
+ 
+    batch_name = 'batch-' + str(count_directories_in_folder()+1)
     
-    full_path = os.path.join(PATH, 
-                             'K-'+str(K),
-                             str(RESOLUTION)+'x'+str(RESOLUTION),
-                             batch_name)
+    full_path = os.path.join(PATH, batch_name)
     
     if not os.path.exists(full_path):
         os.makedirs(full_path)
@@ -253,21 +255,21 @@ def save_to_hfd5(dictionary: dict):
                 else:
                     print(f"Unsupported type for {sub_key}: {type(sub_value)}")
 
-def get_batch_folder_name(K:int, batch_num:int):
-    if batch_num <= count_directories_in_folder(K):
+def get_batch_folder_name(batch_num:int):
+    if batch_num <= count_directories_in_folder():
         return 'batch-' + str(batch_num)
     else:
-        print(ValueError(f"Batch number is too high! Max: {count_directories_in_folder(K)}!"))
+        print(ValueError(f"Batch number is too high! Max: {count_directories_in_folder()}!"))
         return None
 
-def get_path_hfd5(K:int, batch_num:int, v:bool=False):
+def get_path_hfd5(batch_num:int, v:bool=False):
     """
         Load the datapoints from a hfd5 file.
         For know it is for testing and not yet finished.
     """
-    batch_name = get_batch_folder_name(K, batch_num)
+    batch_name = get_batch_folder_name(batch_num)
 
-    full_path_dps = os.path.join(PATH, 'K-'+str(K), batch_name, 'datapoints.h5')
+    full_path_dps = os.path.join(PATH, batch_name, 'datapoints.h5')
           
     return full_path_dps
 
@@ -277,12 +279,12 @@ def check_and_correct_img_name(img_name: str):
     else:
         return img_name
 
-def load_csd_img(K:int, batch_num:int, csd_name: str, show:bool=False):
+def load_csd_img(batch_num:int, csd_name: str, show:bool=False):
     """
         Load the PNG file 
     """
     csd_name =  check_and_correct_img_name(csd_name)
-    path = os.path.join(PATH, 'K-'+str(K), get_batch_folder_name(K, batch_num), 'imgs', csd_name)
+    path = os.path.join(PATH, get_batch_folder_name(batch_num), 'imgs', csd_name)
     
     img = Image.open(path)
     if show:
@@ -290,9 +292,12 @@ def load_csd_img(K:int, batch_num:int, csd_name: str, show:bool=False):
     
     return img 
 
-def reconstruct_img_with_matrices(K:int, batch_num:int, img_name:str, show:bool = False):
+def reconstruct_img_from_tensor(tensor:np.ndarray):
+    return Image.fromarray((tensor.transpose(1, 2, 0)))
+
+def reconstruct_img_with_matrices(batch_num:int, img_name:str, show:bool = False):
     img_name = check_and_correct_img_name(img_name)
-    path = get_path_hfd5(K, batch_num)
+    path = get_path_hfd5(batch_num)
 
     with h5py.File(path, 'r') as f:
         img = f[img_name]['csd'][:]

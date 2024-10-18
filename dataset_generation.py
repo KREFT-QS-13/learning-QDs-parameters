@@ -1,8 +1,9 @@
 import argparse
-import numpy as np
 import sys, time
+import numpy as np
 import multiprocessing as mp
 
+from utilities.config import K as config_K, set_global_K
 import utilities.utils as u
 
 def main():
@@ -22,7 +23,7 @@ def main():
     parser.add_argument('--R', type=np.int32, default=1, 
                         help='The number of batches to to generate. Default vaule 1.')
     
-    parser.add_argument('--K', type=np.int32, default=2, 
+    parser.add_argument('--K', type=np.int32, default=config_K, 
                         help='The number of quantum dots in the system. Default vaule 2.')
     #TODO: Later add noise parameter
     # parser.add_argument('--Noise', type=, help='')
@@ -31,6 +32,8 @@ def main():
     N = args.N
     R = args.R
     K = args.K
+
+    set_global_K(K)
 
     for r in range(R):
         print(f"Batch number: {r+1}/{R}.")
@@ -55,5 +58,8 @@ def main():
         print(f"\nTotal time: {final_time}[s] -> {(final_time/N):.3f}[s] per datapoint.")    
         print(f"Successfully generated datapoints: {suc}/{N}.\n\n")
         
+        if R>1:
+            print("Rest for 2 mintues, to decreser the tmep. of the CPU.")
+            time.sleep(120) # two mintes break
 if __name__ == "__main__":
     main()
