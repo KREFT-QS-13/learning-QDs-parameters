@@ -204,7 +204,7 @@ def load_model_weights(model, path):
 
 def save_results_to_csv(results, filename='Results/model_results.csv'):
     """
-    Save or update the results from train_evaluate_and_save_model function to a CSV file.
+    Save or update the results from train_evaluate_and_save_models function to a CSV file.
     
     Args:
         results (list): List of dictionaries containing model results.
@@ -213,6 +213,7 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
     results_data = []
     for result in results:
         input_shape = result['input_shape']
+        output_shape = result['output_shape']
         dataset_size = result['dataset_size']
         val_split = result['train_params']['val_split']
         test_split = result['train_params']['test_split']
@@ -224,31 +225,29 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
         num_epochs = result['config']['params'].get('epochs', 'N/A')
         learning_rate = result['config']['params'].get('learning_rate', 'N/A')
         epsilon = result['train_params']['epsilon']
-        test_accuracy_global = result['global_test_accuracy']
-        test_accuracy_local = result['local_test_accuracy']
-        MSE = result['metrics']['MSE']
-        MAE = result['metrics']['MAE']
-        R2 = result['metrics']['R2']
 
+        train_params = result['train_params']
         results_data.append({
             'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             'model_name': model_name,
             'base_model': base_model,
             'input_shape': list(input_shape),
+            'output_shape': list(output_shape),
             'dataset_size': dataset_size,
             'val_split': val_split,
             'test_split': test_split,
             'seed': seed,
             'init_weights': init_weights,
-            'batch_size': batch_size,
-            'epochs': num_epochs,
-            'learning_rate': learning_rate,
+            'batch_size':  train_params.get('learning_rate', 'N/A'),
+            'epochs':  train_params.get('epochs', 'N/A'),
+            'learning_rate':  train_params.get('learning_rate', 'N/A'),
             'epsilon': epsilon,
-            'test_accuracy_global': test_accuracy_global,
-            'test_accuracy_local': test_accuracy_local,
-            'MSE': MSE,
-            'MAE': MAE,
-            'R2': R2
+            'test_accuracy_global': result['global_test_accuracy'],
+            'test_accuracy_local':result['local_test_accuracy'],
+            'MSE': result['metrics']['MSE'],
+            'MAE': result['metrics']['MAE'],
+            'R2': result['metrics']['R2']
+
         })
     
     df = pd.DataFrame(results_data)

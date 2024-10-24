@@ -334,6 +334,7 @@ def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir='
                 'params': config['params']
             },
             'input_shape': X.shape[1:],
+            'output_shape': y.shape[1:],
             'dataset_size': len(X),
             'train_params': {k: v for k, v in train_params.items()},
             'history': {k: v for k, v in history.items() if k != 'L2 norm'},
@@ -497,21 +498,21 @@ if __name__ == "__main__":
     
     # Load your data
     print("Loading and preparing datasets...")
-    X, y = mu.prepare_data()
-    # X, y = mu.prepare_data(all_batches=False, batches=np.arange(1,5)) # for testing
+    # X, y = mu.prepare_data()
+    X, y = mu.prepare_data(all_batches=False, batches=np.arange(1,5)) # for testing
     print(f'Successfully prepared {len(X)} datapoints with input size {c.RESOLUTION}x{c.RESOLUTION}.\n')
 
     # Define model configurations
     model_configs = [
         # {'model': VanillaCNN, 'params': {'name': 'VanillaCNN'}},        
         {'model': TransferLearningCNN, 'params': {'name': 'resnet18_model', 'base_model': 'resnet18', 'pretrained': True}},
-        {'model': TransferLearningCNN, 'params': {'name': 'resnet34_model', 'base_model': 'resnet34', 'pretrained': True}},
+        # {'model': TransferLearningCNN, 'params': {'name': 'resnet34_model', 'base_model': 'resnet34', 'pretrained': True}},
     ]
 
     # Define training parameters
     train_params = {
         'batch_size': 512, # 32, 64
-        'epochs': 50, #5, 20, 50, 100
+        'epochs': 2, #5, 20, 50, 100
         'learning_rate': 0.001, #0.0005, 0.0001, 0.005, 0.001
         'val_split': 0.1,
         'test_split': 0.1,
