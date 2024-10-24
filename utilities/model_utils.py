@@ -91,8 +91,9 @@ def preprocess_csd(csd_array:np.ndarray):
     return csd_tensor
 
 def preprocess_capacitance_matrices(c_dd:np.ndarray, c_dg:np.ndarray):
-    c_dd = c_dd[np.triu_indices(n=c.K)]
-    return np.concatenate((c_dd, c_dg.reshape(c.K**2)), axis=None)
+    # c_dd = c_dd[np.triu_indices(n=c.K)]
+    # return np.concatenate((c_dd, c_dg.reshape(c.K**2)), axis=None)
+    return np.concatenate((np.diag(c_dd), np.diag(c_dg)), axis=None)
 
 def preprocess_data(dps:list, filtered:bool=True):
     """
@@ -117,10 +118,8 @@ def preprocess_data(dps:list, filtered:bool=True):
 
 def prepare_data(param_names:list=['csd', 'C_DD', 'C_DG'], all_batches=True, batches:list=None):
     datapoints = load_datapoints(param_names, all_batches, batches)
-
     X, Y = preprocess_data(datapoints)
-
-    return X, Y
+    return torch.FloatTensor(X), torch.FloatTensor(Y)
 
 def tensor_to_image(tensor, unnormalize=True):
     """
@@ -213,22 +212,43 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
     """
     results_data = []
     for result in results:
+        input_shape = result['input_shape']
+        dataset_size = result['dataset_size']
+        val_split = result['train_params']['val_split']
+        test_split = result['train_params']['test_split']
+        seed = result['train_params']['random_state']
         model_name = result['config']['params']['name']
         base_model = result['config']['params'].get('base_model', 'N/A')
-        test_loss = result['test_loss']
+        init_weights = True if result['train_params']['init_weights'] is not None else False  
+        batch_size = result['config']['params'].get('batch_size', 'N/A')
+        num_epochs = result['config']['params'].get('epochs', 'N/A')
+        learning_rate = result['config']['params'].get('learning_rate', 'N/A')
+        epsilon = result['train_params']['epsilon']
         test_accuracy_global = result['global_test_accuracy']
         test_accuracy_local = result['local_test_accuracy']
+        MSE = result['metrics']['MSE']
+        MAE = result['metrics']['MAE']
+        R2 = result['metrics']['R2']
 
         results_data.append({
             'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             'model_name': model_name,
             'base_model': base_model,
-            'test_loss': test_loss,
+            'input_shape': list(input_shape),
+            'dataset_size': dataset_size,
+            'val_split': val_split,
+            'test_split': test_split,
+            'seed': seed,
+            'init_weights': init_weights,
+            'batch_size': batch_size,
+            'epochs': num_epochs,
+            'learning_rate': learning_rate,
+            'epsilon': epsilon,
             'test_accuracy_global': test_accuracy_global,
             'test_accuracy_local': test_accuracy_local,
-            'MSE': result['metrics']['MSE'],
-            'MAE': result['metrics']['MAE'],
-            'R2': result['metrics']['R2']
+            'MSE': MSE,
+            'MAE': MAE,
+            'R2': R2
         })
     
     df = pd.DataFrame(results_data)

@@ -4,7 +4,7 @@ import torch
 PATH_0 = "./datasets/"
 
 DPI = 100
-RESOLUTION = 256 #96 256
+RESOLUTION = 96 #96 256
 
 K = 2
 def set_global_K(value):

@@ -43,7 +43,7 @@ def generate_capacitance_matrices(K: int) -> tuple[np.ndarray, np.ndarray]:
         with a mean and standard deviation of 10% of mean.
     """
     mean = 1.0 #aF
-    std = 0.2
+    std = 0.15
     C_DD, C_DG = np.random.normal(mean, std, (K,K)), np.random.normal(mean, std, (K,K))
     
     # diag_const = np.random.uniform(low=3, high=7)
@@ -58,10 +58,7 @@ def generate_capacitance_matrices(K: int) -> tuple[np.ndarray, np.ndarray]:
     # diag_const_2 = np.random.choice([6,7,9,10,13,14,16,17,18])
    
     for i in range(K):
-        if random.random() < 0.5:
-            diag_const = np.random.choice([6,7,8,9,11,13])
-        else:
-            diag_const = np.random.choice([15,17])
+        diag_const = np.random.choice([5.5,6,6.5,7,7.5,8,8.5,9,9.5,10,11,15])
         
         C_DD[i,i] = np.random.normal(diag_const*mean, diag_const*std)
         C_DG[i,i] = np.random.normal(diag_const*mean, diag_const*std)

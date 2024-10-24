@@ -42,6 +42,9 @@ def divide_dataset(batch_size, val_split, test_split, random_state):
     return train_loader, val_loader, test_loader
 
 def train_model(model, X, y, batch_size=32, epochs=100, learning_rate=0.001, val_split=0.2, test_split=0.1, random_state=42, epsilon=1.0, init_weights=None):
+    '''
+        Train a model on the given data and hyperparameters.
+    '''
     print(f"\nUsing device: {c.DEVICE}")
 
     # Move model to GPU
@@ -58,6 +61,8 @@ def train_model(model, X, y, batch_size=32, epochs=100, learning_rate=0.001, val
         'val_losses': [],
         'train_accuracies': [],
         'val_accuracies': [],
+        'vec_local_train_accuracy': [],
+        'vec_local_val_accuracy': [],
         'train_mse': [],
         'val_mse': [],
         'L2 norm': []
@@ -82,6 +87,7 @@ def train_model(model, X, y, batch_size=32, epochs=100, learning_rate=0.001, val
         train_loss = 0.0
         global_correct_predictions = 0
         local_correct_predictions = 0
+        vec_local_correct_predictions = None
         total_predictions = 0
         all_train_outputs = []
         all_train_targets = []
@@ -97,35 +103,49 @@ def train_model(model, X, y, batch_size=32, epochs=100, learning_rate=0.001, val
 
             predicted_values = outputs.detach().cpu().numpy()
             true_values = targets.cpu().numpy()
-            local_correct_predictions += np.sum(np.isclose(predicted_values, true_values, atol=epsilon))/len(true_values)
-            global_correct_predictions += np.sum(np.all(np.isclose(predicted_values, true_values, atol=epsilon)))
+
+            correct = np.isclose(predicted_values, true_values, atol=epsilon)
+            if vec_local_correct_predictions is None:
+                vec_local_correct_predictions = np.sum(correct, axis=0)
+            else:
+                vec_local_correct_predictions += np.sum(correct, axis=0)
             
+            global_correct_predictions += np.sum(np.all(correct, axis=1))
+            local_correct_predictions += np.sum(correct)/len(true_values)
+
             total_predictions += len(targets)
             all_train_outputs.append(predicted_values)
             all_train_targets.append(true_values)
 
-        train_loss = train_loss / len(train_loader.dataset)
-        local_train_accuracy = local_correct_predictions / total_predictions if total_predictions > 0 else 0
+        avg_train_loss = train_loss / len(train_loader)
+        
         global_train_accuracy = global_correct_predictions / total_predictions if total_predictions > 0 else 0
+        local_train_accuracy = local_correct_predictions / total_predictions if total_predictions > 0 else 0
+        vec_local_train_accuracy = vec_local_correct_predictions / total_predictions if total_predictions > 0 else np.zeros_like(vec_local_correct_predictions)
+
         
         all_train_outputs = np.concatenate(all_train_outputs)
         all_train_targets = np.concatenate(all_train_targets)
         train_mse = mean_squared_error(all_train_targets, all_train_outputs)
 
-        history['train_losses'].append(train_loss)
+        history['train_losses'].append(avg_train_loss)
         history['train_accuracies'].append([global_train_accuracy, local_train_accuracy])
+        history['vec_local_train_accuracy'].append(vec_local_train_accuracy)
         history['train_mse'].append(train_mse)
 
         # Validation step:
-        val_loss, global_val_accuracy, local_val_accuracy, val_mse, _ = evaluate_model(model, val_loader, criterion, epsilon)
+        val_loss, global_val_accuracy, local_val_accuracy, val_mse, _, val_vec_local_acc = evaluate_model(model, val_loader, criterion, epsilon)
         history['val_losses'].append(val_loss)
         history['val_accuracies'].append([global_val_accuracy, local_val_accuracy])
+        history['vec_local_val_accuracy'].append(val_vec_local_acc)
         history['val_mse'].append(val_mse)
-        
-        print(f"Epoch {epoch+1}/{epochs}: Tr. Loss: {train_loss:.5f}, Val. Loss: {val_loss:.5f}")
-        print(f"{'':<11}Tr. Acc.: {100*global_train_accuracy:.2f}% ({100*local_train_accuracy:.2f}%), "
+
+        print(f"Epoch {epoch+1}/{epochs}: Tr. Loss: {avg_train_loss:.5f}, Val. Loss: {val_loss:.5f}")
+        print(f"{'':<11} Tr. Acc.: {100*global_train_accuracy:.2f}% ({100*local_train_accuracy:.2f}%), "
               f"Val. Acc.: {100*global_val_accuracy:.2f}% ({100*local_val_accuracy:.2f}%)")
-        print(f"{'':<11}Tr. MSE: {train_mse:.5f}, Val. MSE: {val_mse:.5f}")
+        print(f"{'':<11} Vec. Tr. Local Acc.: {np.round(100*vec_local_train_accuracy, 2)}%")
+        print(f"{'':<11} Vec. Val. Local Acc.: {np.round(100*val_vec_local_acc, 2)}%")
+        print(f"{'':<11} Tr. MSE: {train_mse:.5f}, Val. MSE: {val_mse:.5f}")
 
     return model, history, test_loader
 
@@ -134,6 +154,7 @@ def evaluate_model(model, dataloader, criterion=nn.MSELoss(), epsilon=1.0):
 
     global_correct_predictions = 0
     local_correct_predictions = 0
+    vec_local_correct_predictions = None
     total_predictions = 0
     total_loss = 0.0
     all_outputs = []
@@ -151,21 +172,30 @@ def evaluate_model(model, dataloader, criterion=nn.MSELoss(), epsilon=1.0):
 
             predictions.append([inputs.cpu().numpy(), true_values, predicted_values])
 
-            local_correct_predictions += np.sum(np.isclose(predicted_values, true_values, atol=epsilon))/len(true_values)
-            global_correct_predictions += np.sum(np.all(np.isclose(predicted_values, true_values, atol=epsilon)))
+            correct = np.isclose(predicted_values, true_values, atol=epsilon)
+            if vec_local_correct_predictions is None:
+                vec_local_correct_predictions = np.sum(correct, axis=0)
+            else:
+                vec_local_correct_predictions += np.sum(correct, axis=0)
+            
+            global_correct_predictions += np.sum(np.all(correct, axis=1))
+            local_correct_predictions += np.sum(correct)/len(true_values)
+
+
             total_predictions += len(targets)
             all_outputs.append(predicted_values)
             all_targets.append(true_values)
 
-    avg_loss = total_loss / len(dataloader.dataset)
-    local_avg_accuracy = local_correct_predictions / total_predictions if total_predictions > 0 else 0
+    avg_loss = total_loss / len(dataloader)
+    
     global_avg_accuracy = global_correct_predictions / total_predictions if total_predictions > 0 else 0
-
+    local_avg_accuracy = local_correct_predictions / total_predictions if total_predictions > 0 else 0
+    vec_local_avg_accuracy = vec_local_correct_predictions / total_predictions if total_predictions > 0 else np.zeros_like(vec_local_correct_predictions)
     all_outputs = np.concatenate(all_outputs)
     all_targets = np.concatenate(all_targets)
     mse = mean_squared_error(all_targets, all_outputs)
 
-    return avg_loss, global_avg_accuracy, local_avg_accuracy, mse, predictions
+    return avg_loss, global_avg_accuracy, local_avg_accuracy, mse, predictions, vec_local_avg_accuracy
 
 def collect_performance_metrics(model, test_loader):
     model.eval()
@@ -220,7 +250,7 @@ def save_results_and_history(result, history,  predictions, save_dir):
     targets_array = np.concatenate([p[1] for p in predictions])
     outputs_array = np.concatenate([p[2] for p in predictions])
 
-    with h5py.File('predictions.h5', 'w') as hf:
+    with h5py.File(os.path.join(save_dir, 'predictions.h5'), 'w') as hf:
         hf.create_dataset('inputs', data=inputs_array)
         hf.create_dataset('targets', data=targets_array)
         hf.create_dataset('outputs', data=outputs_array)
@@ -240,7 +270,7 @@ def save_model(model, save_dir, model_name):
     torch.save(model.state_dict(), os.path.join(save_dir, f'{model_name}.pth'))
 
 def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir='Results'):
-    """
+    '''
     Train, evaluate, and save multiple models based on the given configurations.
     
     Args:
@@ -252,7 +282,7 @@ def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir='
     
     Returns:
         list: Results including model, history, and evaluation metrics for each model.
-    """
+    '''
     results = []
     for config in model_configs:
         model = config['model'](**config['params'])
@@ -276,13 +306,14 @@ def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir='
         trained_model, history, test_loader = train_model(model, X, y, **train_params)
         
         # Evaluate the model
-        test_loss, global_test_accuracy, local_test_accuracy, test_mse, predictions = evaluate_model(trained_model, test_loader, epsilon=train_params.get('epsilon', 1.0))
+        test_loss, global_test_accuracy, local_test_accuracy, test_mse, predictions, vec_local_test_accuracy = evaluate_model(trained_model, test_loader, epsilon=train_params.get('epsilon', 1.0))
         
         # Collect performance metrics on the test set
         metrics = collect_performance_metrics(trained_model, test_loader)
         
         print(f"Evaluation: Test Accuracy (Global): {global_test_accuracy:.2f}%, Test Accuracy (Local): {local_test_accuracy:.2f}%")
         print(f"Evaluation: Test Loss: {test_loss:.5f}, Test MSE: {test_mse:.5f}")
+        print(f"Evaluation: Vec. Test Local Acc.: {np.round(100*vec_local_test_accuracy, 2)}%")
         print(f"Evaluation: MSE: {metrics['MSE']:.2f}, MAE: {metrics['MAE']:.2f}, R2: {metrics['R2']:.2f}\n")
 
         # Extract targets and outputs from predictions
@@ -316,7 +347,7 @@ def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir='
         with open(os.path.join(model_save_dir, 'results.json'), 'w') as f:
             json.dump(result, f, indent=4, cls=NumpyEncoder)
         
-        plot_learning_curves(history, model_save_dir)
+        plot_learning_curves(history, result, model_save_dir)
         
         results.append(result)
         
@@ -327,7 +358,7 @@ def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir='
         
     return results
 
-def plot_learning_curves(history, save_dir):
+def plot_learning_curves(history, result, save_dir):
     plt.figure(figsize=(20, 12))
     
     # Loss plot
@@ -336,7 +367,7 @@ def plot_learning_curves(history, save_dir):
     plt.plot(history['val_losses'], label='Validation Loss')
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
-    plt.title('Loss vs. Epochs')
+    plt.title(f'Loss vs. Epochs ({result["train_params"]["batch_size"]}, {result["train_params"]["epochs"]}, {result["train_params"]["learning_rate"]})')
     plt.legend(fontsize=12)
     
     # MSE plot
@@ -371,7 +402,7 @@ def plot_learning_curves(history, save_dir):
     plt.close()
 
 def plot_l2_norm_polar(targets, outputs, save_dir, num_points=None):
-    """
+    '''
     Create a plot in polar coordinates with points as distances between
     the origin and the L2 norm of the difference of targets and outputs.
     The plot will have concentric circles at integer radii and no angle labels.
@@ -385,7 +416,7 @@ def plot_l2_norm_polar(targets, outputs, save_dir, num_points=None):
 
     Returns:
         None
-    """
+    '''
     # Calculate L2 norms
     l2_norms = np.linalg.norm(targets - outputs, axis=1)
     
@@ -410,6 +441,17 @@ def plot_l2_norm_polar(targets, outputs, save_dir, num_points=None):
     # Calculate percentages for each L2 range
     percentages = [np.sum(color_groups == i) / len(color_groups) * 100 for i in range(6)]
     
+    # if np.max(l2_norms) > 10:
+    #     increment = 1
+    #     base = 5
+    # elif np.max(l2_norms) > 5:
+    #     increment = 0.5
+    #     base = 5
+    # elif np.max(l2_norms) > 1:
+    #     increment = 0.25
+    #     base = 0
+
+
     # Plot the points
     for i in range(6):
         mask = color_groups == i
@@ -424,7 +466,7 @@ def plot_l2_norm_polar(targets, outputs, save_dir, num_points=None):
     ax.set_rmax(rmax)
     
     # Set the rticks to be integer values from 1 to rmax
-    ax.set_rticks(np.concatenate((np.arange(1, 5), np.arange(5, rmax + 1, 5 ))))
+    ax.set_rticks(np.concatenate((np.arange(1, 5), np.arange(5, rmax + 1, 5))))
     
     # Remove the angle labels
     ax.set_xticklabels([])
@@ -455,27 +497,28 @@ if __name__ == "__main__":
     
     # Load your data
     print("Loading and preparing datasets...")
-    # X, y = mu.prepare_data()
-    X, y = mu.prepare_data(all_batches=False, batches=np.arange(1,57)) # for testing
+    X, y = mu.prepare_data()
+    # X, y = mu.prepare_data(all_batches=False, batches=np.arange(1,5)) # for testing
     print(f'Successfully prepared {len(X)} datapoints with input size {c.RESOLUTION}x{c.RESOLUTION}.\n')
 
     # Define model configurations
     model_configs = [
         # {'model': VanillaCNN, 'params': {'name': 'VanillaCNN'}},        
         {'model': TransferLearningCNN, 'params': {'name': 'resnet18_model', 'base_model': 'resnet18', 'pretrained': True}},
-        # {'model': TransferLearningCNN, 'params': {'name': 'resnet34_model', 'base_model': 'resnet34', 'pretrained': True}},
+        {'model': TransferLearningCNN, 'params': {'name': 'resnet34_model', 'base_model': 'resnet34', 'pretrained': True}},
     ]
 
     # Define training parameters
     train_params = {
-        'batch_size': 64, # 32, 64
-        'epochs': 20, #5, 20, 50, 100
+        'batch_size': 512, # 32, 64
+        'epochs': 50, #5, 20, 50, 100
         'learning_rate': 0.001, #0.0005, 0.0001, 0.005, 0.001
         'val_split': 0.1,
-        'test_split': 0.2,
-        'random_state': 123,
+        'test_split': 0.1,
+        'random_state': 42,
         'epsilon': 1,
-        'init_weights': 'Results/resnet18_model_20241017_212014/resnet18_model.pth',
+        'init_weights': None,
+        # 'prev_hist': True
     }
 
     # Train, evaluate, and save models
