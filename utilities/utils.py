@@ -19,20 +19,18 @@ sys.path.append('./qdarts')
 from qdarts.experiment import Experiment
 from qdarts.plotting import plot_polytopes
 
-# import learning_parameters.config as config
+import utilities.config as c    
+PATH = c.PATH
 
-import utilities.config as config
-PATH = config.PATH
-
-DPI = config.DPI
-RESOLUTION = config.RESOLUTION
-K = config.K
+DPI = c.DPI
+RESOLUTION = c.RESOLUTION
+K = c.K
 
 
 def draw_digonal_elemnts(K:int, C_DD:np.ndarray, C_DG):
     pass
 
-def generate_capacitance_matrices(K: int) -> tuple[np.ndarray, np.ndarray]:
+def generate_capacitance_matrices() -> tuple[np.ndarray, np.ndarray]:
     """
         Generate random capacitance matrices for a given number of dots K from a normal distribution.
         
@@ -44,7 +42,7 @@ def generate_capacitance_matrices(K: int) -> tuple[np.ndarray, np.ndarray]:
     """
     mean = 1.0 #aF
     std = 0.15
-    C_DD, C_DG = np.random.normal(mean, std, (K,K)), np.random.normal(mean, std, (K,K))
+    C_DD, C_DG = np.random.normal(mean, std, (c.K,c.K)), np.random.normal(mean, std, (c.K,c.K))
     
     # diag_const = np.random.uniform(low=3, high=7)
     # diag_const = np.random.choice([2,3,5,7,9,11,13,15,17,21,25,30])
@@ -114,7 +112,7 @@ def generate_dataset(K: int, x_vol: np.ndarray, y_vol: np.ndarray, ks: int=0):
         Run the QDarts experiment for a given number of dots K and
           ranges of voltages to create needed data for CSD creation.
     """
-    C_DD, C_DG = generate_capacitance_matrices(K)
+    C_DD, C_DG = generate_capacitance_matrices()
     # C_DD, C_DG = generate_dummy_data(K)
 
     capacitance_config = {

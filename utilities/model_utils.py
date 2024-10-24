@@ -101,6 +101,26 @@ def preprocess_capacitance_matrices(c_dd:np.ndarray, c_dg:np.ndarray):
     else:
         raise ValueError(f"Mode must be 1 (all params), 2(both diags), 3(diag C_DD), {c.MODE} is not a valid mode.")
 
+def reconstruct_capacitance_matrices(output:np.ndarray):
+    if c.MODE == 1:
+        c_dd = np.zeros((c.K, c.K))
+        c_dd[np.triu_indices(n=c.K)] = output[:c.K*(c.K+1)//2]
+        c_dd = c_dd + c_dd.T 
+        c_dd[np.diag_indices_from(c_dd)] = c_dd[np.diag_indices_from(c_dd)]/2
+        c_dg = output[c.K*(c.K+1)//2:].reshape(c.K, c.K)
+    else:
+        raise ValueError(f"For modes different than 1, the function is not implemented (ambiguous solution).")
+    # elif c.MODE == 2:
+    #     c_dd = np.diag(output[:c.K])
+    #     c_dg = np.diag(output[c.K:])
+    # elif c.MODE == 3:
+    #     c_dd = np.diag(output)
+    #     c_dg = np.zeros((c.K, c.K))
+    # else:
+    #     raise ValueError(f"Mode must be 1,2,3. {c.MODE} is not a valid mode.")
+
+    return c_dd, c_dg   
+
 def preprocess_data(dps:list, filtered:bool=True):
     """
     Args:
