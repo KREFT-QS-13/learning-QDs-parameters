@@ -509,20 +509,25 @@ if __name__ == "__main__":
         # {'model': TransferLearningCNN, 'params': {'name': 'resnet34_model', 'base_model': 'resnet34', 'pretrained': True}},
     ]
 
-    # Define training parameters
-    train_params = {
-        'batch_size': 512, # 32, 64
-        'epochs': 2, #5, 20, 50, 100
-        'learning_rate': 0.001, #0.0005, 0.0001, 0.005, 0.001
-        'val_split': 0.1,
-        'test_split': 0.1,
-        'random_state': 42,
-        'epsilon': 1,
-        'init_weights': None,
-        # 'prev_hist': True
-    }
+    # Define training parameters for each model
+    train_params_list = [
+        {
+            'batch_size': 512, # 32, 64
+            'epochs': 100, #5, 20, 50, 100
+            'learning_rate': 0.001, #0.0005, 0.0001, 0.005, 0.001
+            'val_split': 0.1,
+            'test_split': 0.1,
+            'random_state': 42,
+            'epsilon': 1,
+            'init_weights': None,
+        },
+    ]  
+
+    # Combine model configurations with their respective training parameters
+    models_configs = [{'model_config': mc, 'train_params': tp} for mc, tp in zip(model_configs, train_params_list)]
 
     # Train, evaluate, and save models
-    results = train_evaluate_and_save_models(model_configs, X, y, train_params)
+    for config in models_configs:
+        results = train_evaluate_and_save_models([config['model_config']], X, y, config['train_params'])
 
     print("Training, evaluation, and saving complete!")
