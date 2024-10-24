@@ -15,8 +15,13 @@ class TransferLearningCNN(nn.Module):
         num_features = self.base_model.fc.in_features
         self.base_model.fc = nn.Identity()  # Remove the last fully connected layer
         
-        # output_size = c.K * (c.K + 1) // 2 + c.K**2
-        output_size = 4
+        if c.MODE == 1:
+            output_size = c.K * (c.K + 1) // 2 + c.K**2
+        elif c.MODE == 2:
+            output_size = 2*c.K
+        elif c.MODE == 3:
+            output_size = c.K
+ 
         
         self.custom_head = nn.Sequential(
             nn.Linear(num_features, 512),

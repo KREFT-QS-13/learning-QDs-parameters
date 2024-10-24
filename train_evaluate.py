@@ -270,7 +270,7 @@ def save_model(model, save_dir, model_name):
     torch.save(model.state_dict(), os.path.join(save_dir, f'{model_name}.pth'))
 
 def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir='Results'):
-    '''
+    """
     Train, evaluate, and save multiple models based on the given configurations.
     
     Args:
@@ -282,15 +282,16 @@ def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir='
     
     Returns:
         list: Results including model, history, and evaluation metrics for each model.
-    '''
+    """
     results = []
     for config in model_configs:
         model = config['model'](**config['params'])
         model_name = config['params']['name']
+        base_model = config['params'].get('base_model', 'default')
         
-        # Create a unique directory for this run
+        # Create a unique directory for this run under the base model directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        model_save_dir = os.path.join(save_dir, f"{model_name}_{timestamp}")
+        model_save_dir = os.path.join(save_dir, base_model, f"{model_name}_{timestamp}")
         os.makedirs(model_save_dir, exist_ok=True)
         
         # Load initial weights if specified
@@ -344,7 +345,6 @@ def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir='
             'metrics': {k: float(v) for k, v in metrics.items()},
         }
         
-
         with open(os.path.join(model_save_dir, 'results.json'), 'w') as f:
             json.dump(result, f, indent=4, cls=NumpyEncoder)
         
@@ -490,6 +490,12 @@ def plot_l2_norm_polar(targets, outputs, save_dir, num_points=None):
 
 # Example usage:
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Train and evaluate models")
+    parser.add_argument('--mode', type=int, default=1, help='Mode for preprocessing capacitance matrices (output size).')
+    args = parser.parse_args()
+
+    c.set_global_MODE(args.mode)
+    
     # Check if CUDA is available
     if torch.cuda.is_available():
         print("CUDA is available. Using GPU.")

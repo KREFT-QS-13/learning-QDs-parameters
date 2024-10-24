@@ -91,9 +91,15 @@ def preprocess_csd(csd_array:np.ndarray):
     return csd_tensor
 
 def preprocess_capacitance_matrices(c_dd:np.ndarray, c_dg:np.ndarray):
-    # c_dd = c_dd[np.triu_indices(n=c.K)]
-    # return np.concatenate((c_dd, c_dg.reshape(c.K**2)), axis=None)
-    return np.concatenate((np.diag(c_dd), np.diag(c_dg)), axis=None)
+    if c.MODE == 1:
+        c_dd = c_dd[np.triu_indices(n=c.K)]
+        return np.concatenate((c_dd, c_dg.reshape(c.K**2)), axis=None)
+    elif c.MODE  == 2:
+        return np.concatenate((np.diag(c_dd), np.diag(c_dg)), axis=None)
+    elif c.MODE  == 3:
+        return np.diag(c_dd)
+    else:
+        raise ValueError(f"Mode must be 1 (all params), 2(both diags), 3(diag C_DD), {c.MODE} is not a valid mode.")
 
 def preprocess_data(dps:list, filtered:bool=True):
     """
