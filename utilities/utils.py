@@ -19,20 +19,18 @@ sys.path.append('./qdarts')
 from qdarts.experiment import Experiment
 from qdarts.plotting import plot_polytopes
 
-# import learning_parameters.config as config
+import utilities.config as c    
+PATH = c.PATH
 
-import utilities.config as config
-PATH = config.PATH
-
-DPI = config.DPI
-RESOLUTION = config.RESOLUTION
-K = config.K
+DPI = c.DPI
+RESOLUTION = c.RESOLUTION
+K = c.K
 
 
 def draw_digonal_elemnts(K:int, C_DD:np.ndarray, C_DG):
     pass
 
-def generate_capacitance_matrices(K: int) -> tuple[np.ndarray, np.ndarray]:
+def generate_capacitance_matrices() -> tuple[np.ndarray, np.ndarray]:
     """
         Generate random capacitance matrices for a given number of dots K from a normal distribution.
         
@@ -43,37 +41,18 @@ def generate_capacitance_matrices(K: int) -> tuple[np.ndarray, np.ndarray]:
         with a mean and standard deviation of 10% of mean.
     """
     mean = 1.0 #aF
-    std = 0.2
-    C_DD, C_DG = np.random.normal(mean, std, (K,K)), np.random.normal(mean, std, (K,K))
+    std = 0.15
+    C_DG = np.random.normal(mean, std, (c.K,c.K))
     
-    # diag_const = np.random.uniform(low=3, high=7)
-    # diag_const = np.random.choice([2,3,5,7,9,11,13,15,17,21,25,30])
-    # diag_const = np.random.choice([2,3,5,7,9,11,12,15,17,21,31,43])
-    # diag_const_1 = np.random.choice([3,3.5,4,4.5,5,6,7,8,9,11,13,15,17,18,20,22,25])
-    # diag_const_2 = np.random.choice([3,3.5,4,5,7,8,9,10,13,14,15,16,17,18,20])
-    # diag_const = np.random.choice(np.linspace(3,27,25))
-    # diag_const = np.random.choice([5,10,15,20,25,30,35,40,45,50])
-
-    # diag_const = np.random.choice([5,6,7,8,9,11,13,15,17,20,22,25])
-    # diag_const_2 = np.random.choice([6,7,9,10,13,14,16,17,18])
-   
     for i in range(K):
-        if random.random() < 0.5:
-            diag_const = np.random.choice([6,7,8,9,11,13])
-        else:
-            diag_const = np.random.choice([15,17])
-        
-        C_DD[i,i] = np.random.normal(diag_const*mean, diag_const*std)
+        diag_const = np.random.choice([5.5,6,6.5,7,7.5,8,8.5,9,9.5,10,11,15])
         C_DG[i,i] = np.random.normal(diag_const*mean, diag_const*std)
+       
+    C_m = np.random.normal(mean, std)
 
+    C_DD = np.sum(C_DG, axis=1).T*np.eye(c.K) + C_m
 
-        # if we want to keep similiar magnitude on both dot-dot capacitance 
-    # for i in range(K):
-        # C_DD[i,i] = np.random.normal(diag_const*mean, std)
-        # C_DG[i,i] = np.random.normal(diag_const*mean, std)
-        # coin filp: between those two
-
-    C_DD = (C_DD + C_DD.T)/2
+    # C_DD = (C_DD + C_DD.T)/2
 
     return C_DD, C_DG
 
@@ -117,7 +96,7 @@ def generate_dataset(K: int, x_vol: np.ndarray, y_vol: np.ndarray, ks: int=0):
         Run the QDarts experiment for a given number of dots K and
           ranges of voltages to create needed data for CSD creation.
     """
-    C_DD, C_DG = generate_capacitance_matrices(K)
+    C_DD, C_DG = generate_capacitance_matrices()
     # C_DD, C_DG = generate_dummy_data(K)
 
     capacitance_config = {

@@ -91,8 +91,35 @@ def preprocess_csd(csd_array:np.ndarray):
     return csd_tensor
 
 def preprocess_capacitance_matrices(c_dd:np.ndarray, c_dg:np.ndarray):
-    c_dd = c_dd[np.triu_indices(n=c.K)]
-    return np.concatenate((c_dd, c_dg.reshape(c.K**2)), axis=None)
+    if c.MODE == 1:
+        c_dd = c_dd[np.triu_indices(n=c.K)]
+        return np.concatenate((c_dd, c_dg.reshape(c.K**2)), axis=None)
+    elif c.MODE  == 2:
+        return np.concatenate((np.diag(c_dd), np.diag(c_dg)), axis=None)
+    elif c.MODE  == 3:
+        return np.diag(c_dd)
+    else:
+        raise ValueError(f"Mode must be 1 (all params), 2(both diags), 3(diag C_DD), {c.MODE} is not a valid mode.")
+
+def reconstruct_capacitance_matrices(output:np.ndarray):
+    if c.MODE == 1:
+        c_dd = np.zeros((c.K, c.K))
+        c_dd[np.triu_indices(n=c.K)] = output[:c.K*(c.K+1)//2]
+        c_dd = c_dd + c_dd.T 
+        c_dd[np.diag_indices_from(c_dd)] = c_dd[np.diag_indices_from(c_dd)]/2
+        c_dg = output[c.K*(c.K+1)//2:].reshape(c.K, c.K)
+    else:
+        raise ValueError(f"For modes different than 1, the function is not implemented (ambiguous solution).")
+    # elif c.MODE == 2:
+    #     c_dd = np.diag(output[:c.K])
+    #     c_dg = np.diag(output[c.K:])
+    # elif c.MODE == 3:
+    #     c_dd = np.diag(output)
+    #     c_dg = np.zeros((c.K, c.K))
+    # else:
+    #     raise ValueError(f"Mode must be 1,2,3. {c.MODE} is not a valid mode.")
+
+    return c_dd, c_dg   
 
 def preprocess_data(dps:list, filtered:bool=True):
     """
@@ -117,10 +144,8 @@ def preprocess_data(dps:list, filtered:bool=True):
 
 def prepare_data(param_names:list=['csd', 'C_DD', 'C_DG'], all_batches=True, batches:list=None):
     datapoints = load_datapoints(param_names, all_batches, batches)
-
     X, Y = preprocess_data(datapoints)
-
-    return X, Y
+    return torch.FloatTensor(X), torch.FloatTensor(Y)
 
 def tensor_to_image(tensor, unnormalize=True):
     """
@@ -205,7 +230,7 @@ def load_model_weights(model, path):
 
 def save_results_to_csv(results, filename='Results/model_results.csv'):
     """
-    Save or update the results from train_evaluate_and_save_model function to a CSV file.
+    Save or update the results from train_evaluate_and_save_models function to a CSV file.
     
     Args:
         results (list): List of dictionaries containing model results.
@@ -213,22 +238,42 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
     """
     results_data = []
     for result in results:
+        input_shape = result['input_shape']
+        output_shape = result['output_shape']
+        dataset_size = result['dataset_size']
+        val_split = result['train_params']['val_split']
+        test_split = result['train_params']['test_split']
+        seed = result['train_params']['random_state']
         model_name = result['config']['params']['name']
         base_model = result['config']['params'].get('base_model', 'N/A')
-        test_loss = result['test_loss']
-        test_accuracy_global = result['global_test_accuracy']
-        test_accuracy_local = result['local_test_accuracy']
+        init_weights = True if result['train_params']['init_weights'] is not None else False  
+        batch_size = result['config']['params'].get('batch_size', 'N/A')
+        num_epochs = result['config']['params'].get('epochs', 'N/A')
+        learning_rate = result['config']['params'].get('learning_rate', 'N/A')
+        epsilon = result['train_params']['epsilon']
 
+        train_params = result['train_params']
         results_data.append({
             'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             'model_name': model_name,
             'base_model': base_model,
-            'test_loss': test_loss,
-            'test_accuracy_global': test_accuracy_global,
-            'test_accuracy_local': test_accuracy_local,
+            'input_shape': list(input_shape),
+            'output_shape': list(output_shape),
+            'dataset_size': dataset_size,
+            'val_split': val_split,
+            'test_split': test_split,
+            'seed': seed,
+            'init_weights': init_weights,
+            'batch_size':  train_params.get('learning_rate', 'N/A'),
+            'epochs':  train_params.get('epochs', 'N/A'),
+            'learning_rate':  train_params.get('learning_rate', 'N/A'),
+            'epsilon': epsilon,
+            'test_accuracy_global': result['global_test_accuracy'],
+            'test_accuracy_local':result['local_test_accuracy'],
             'MSE': result['metrics']['MSE'],
             'MAE': result['metrics']['MAE'],
             'R2': result['metrics']['R2']
+
         })
     
     df = pd.DataFrame(results_data)
