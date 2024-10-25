@@ -45,7 +45,7 @@ def generate_capacitance_matrices() -> tuple[np.ndarray, np.ndarray]:
     C_DG = np.random.normal(mean, std, (c.K,c.K))
     
     for i in range(K):
-        diag_const = np.random.choice([5.5,6,6.5,7,7.5,8,8.5,9,9.5,10,11,15])
+        diag_const = np.random.choice([5.5,6,6.5,7,7.5,8,8.5,9,9.5,10,11,15,16,18,20])
         C_DG[i,i] = np.random.normal(diag_const*mean, diag_const*std)
        
     C_m = np.random.normal(mean, std)
