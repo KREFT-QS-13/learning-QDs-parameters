@@ -22,6 +22,7 @@ import utilities.config as c
 import utilities.model_utils as mu
 from models.transfer_CNN import TransferLearningCNN
 from models.vanilla_CNN import VanillaCNN
+from utilities.utils import ensure_dir_exists
 
 
 def divide_dataset(batch_size, val_split, test_split, random_state):
@@ -235,6 +236,7 @@ class NumpyEncoder(json.JSONEncoder):
         return super(NumpyEncoder, self).default(obj)
 
 def save_results_and_history(result, history,  predictions, save_dir):
+    ensure_dir_exists(save_dir)
     # Save as HDF5
     with h5py.File(os.path.join(save_dir, 'results_and_history.h5'), 'w') as f:
         f.create_dataset('test_loss', data=result['test_loss'])
@@ -266,6 +268,7 @@ def save_results_and_history(result, history,  predictions, save_dir):
             writer.writerow([k, v])
 
 def save_model(model, save_dir, model_name):
+    ensure_dir_exists(save_dir)
     # Save in PyTorch's native format
     torch.save(model.state_dict(), os.path.join(save_dir, f'{model_name}.pth'))
 
@@ -292,7 +295,7 @@ def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir='
         # Create a unique directory for this run under the base model directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_save_dir = os.path.join(save_dir, base_model, f"{model_name}_{timestamp}")
-        os.makedirs(model_save_dir, exist_ok=True)
+        ensure_dir_exists(model_save_dir)
         
         # Load initial weights if specified
         if train_params.get('init_weights'):
@@ -360,6 +363,7 @@ def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir='
     return results
 
 def plot_learning_curves(history, result, save_dir):
+    ensure_dir_exists(save_dir)
     plt.figure(figsize=(20, 12))
     
     # Loss plot
@@ -403,6 +407,7 @@ def plot_learning_curves(history, result, save_dir):
     plt.close()
 
 def plot_l2_norm_polar(targets, outputs, save_dir, num_points=None):
+    ensure_dir_exists(save_dir)
     '''
     Create a plot in polar coordinates with points as distances between
     the origin and the L2 norm of the difference of targets and outputs.

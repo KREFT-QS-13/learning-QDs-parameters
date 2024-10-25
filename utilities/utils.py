@@ -337,3 +337,14 @@ def generate_datapoint(args):
         print(f"Execution failed for datapoint {i+1}!")
         print(f"Error: {e}")
         return None
+
+def ensure_dir_exists(path):
+    """
+    Check if the directory exists, and if not, create it.
+    
+    Args:
+        path (str): The directory path to check/create.
+    """
+    if not os.path.exists(path):
+        os.makedirs(path)
+        print(f"Created directory: {path}")

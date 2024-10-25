@@ -10,6 +10,8 @@ from datetime import datetime
 import torch
 from torchvision import transforms
 
+from utilities.utils import ensure_dir_exists
+
 def load_datapoints(param_names:list, all_batches=True, batches:list=None):
     """
     Args:
@@ -236,6 +238,7 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
         results (list): List of dictionaries containing model results.
         filename (str): Name of the CSV file to save/update.
     """
+    ensure_dir_exists(os.path.dirname(filename))
     results_data = []
     for result in results:
         input_shape = result['input_shape']
