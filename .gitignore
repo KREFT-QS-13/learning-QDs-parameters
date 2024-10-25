@@ -2,3 +2,6 @@ datasets
 datasets/
 
 Results/
+
+*.slurm
+slurm_scripts/
