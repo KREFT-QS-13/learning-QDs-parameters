@@ -2,6 +2,8 @@ import os
 import torch
 
 PATH_0 = "./datasets/"
+# PATH_0 = "./ALICE/"
+
 
 DPI = 100
 RESOLUTION = 96 #96 256

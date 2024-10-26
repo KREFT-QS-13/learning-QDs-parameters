@@ -325,7 +325,7 @@ def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir='
         outputs = np.concatenate([p[2] for p in predictions])
         
         # Create and save the L2 norm polar plot
-        plot_l2_norm_polar(targets, outputs, model_save_dir)
+        plot_l2_norm_polar(targets, outputs, model_save_dir, train_params['epsilon'])
         
         # Save the model
         model_path = os.path.join(model_save_dir, f"{model_name}.pth")
@@ -406,23 +406,25 @@ def plot_learning_curves(history, result, save_dir):
     plt.savefig(os.path.join(save_dir, 'learning_curves.png'))
     plt.close()
 
-def plot_l2_norm_polar(targets, outputs, save_dir, num_points=None):
-    ensure_dir_exists(save_dir)
-    '''
+def plot_l2_norm_polar(targets, outputs, save_dir, epsilon, num_points=None):
+    """
     Create a plot in polar coordinates with points as distances between
     the origin and the L2 norm of the difference of targets and outputs.
     The plot will have concentric circles at integer radii and no angle labels.
-    Colors and shapes represent distance groups from the origin.
+    Colors and shapes represent distance groups from the origin based on epsilon.
 
     Args:
         targets (np.array): The true values.
         outputs (np.array): The predicted values from the model.
         save_dir (str): Directory to save the plot.
+        epsilon (float): The epsilon value used for grouping.
         num_points (int, optional): Number of points to plot. If None, all points are plotted.
 
     Returns:
         None
-    '''
+    """
+    ensure_dir_exists(save_dir)
+    
     # Calculate L2 norms
     l2_norms = np.linalg.norm(targets - outputs, axis=1)
     
@@ -439,46 +441,40 @@ def plot_l2_norm_polar(targets, outputs, save_dir, num_points=None):
     # Create the figure
     fig, ax = plt.subplots(figsize=(16, 14), subplot_kw=dict(projection='polar'))
     
-    # Define color groups and shapes
-    color_groups = np.minimum(np.floor(l2_norms), 5)
+    # Define color groups and shapes based on epsilon
+    color_groups = np.minimum(np.floor(l2_norms / epsilon), 5)  # 6 groups (0 to 5)
     shapes = ['o', 's', '^', 'D', 'p', '*']
     colors = plt.cm.viridis(np.linspace(0, 1, 6))
     
     # Calculate percentages for each L2 range
     percentages = [np.sum(color_groups == i) / len(color_groups) * 100 for i in range(6)]
     
-    # if np.max(l2_norms) > 10:
-    #     increment = 1
-    #     base = 5
-    # elif np.max(l2_norms) > 5:
-    #     increment = 0.5
-    #     base = 5
-    # elif np.max(l2_norms) > 1:
-    #     increment = 0.25
-    #     base = 0
-
-
     # Plot the points
     for i in range(6):
         mask = color_groups == i
         if i < 5:
-            label = f'{i:.0f} ≤ L2 < {i+1:.0f} ({percentages[i]:.1f}%)'
+            label = f'{i*epsilon:.2f} ≤ L2 < {(i+1)*epsilon:.2f} ({percentages[i]:.1f}%)'
         else:
-            label = f'L2 ≥ 5 ({percentages[i]:.1f}%)'
+            label = f'L2 ≥ {5*epsilon:.2f} ({percentages[i]:.1f}%)'
         ax.scatter(theta[mask], l2_norms[mask], c=[colors[i]], marker=shapes[i], label=label, alpha=0.8)
     
     # Set the rmax to be the ceiling of the max L2 norm
     rmax = np.ceil(np.max(l2_norms))
     ax.set_rmax(rmax)
     
-    # Set the rticks to be integer values from 1 to rmax
-    ax.set_rticks(np.concatenate((np.arange(1, 5), np.arange(5, rmax + 1, 5))))
+    # Set the rticks to be multiples of epsilon
+    rticks = np.concatenate([
+        np.arange(0, min(5*epsilon, rmax), epsilon),
+        np.arange(5*epsilon, rmax + epsilon, max(epsilon, 1))
+    ])
+    rticks = np.unique(rticks)  # Remove any duplicates
+    ax.set_rticks(rticks)
     
     # Remove the angle labels
     ax.set_xticklabels([])
     
     # Add labels and title
-    ax.set_title(f"L2 Norm of Target-Output Difference ({num_points} points)", fontsize=22)
+    ax.set_title(f"L2 Norm of Target-Output Difference\n(ε={epsilon:.2f}, {num_points} points)", fontsize=22)
     
     # Add legend for shapes and colors
     legend = ax.legend(loc='center left', bbox_to_anchor=(1.05, 0.5), title="L2 Norm Groups", fontsize=18)
@@ -509,8 +505,8 @@ if __name__ == "__main__":
     
     # Load your data
     print("Loading and preparing datasets...")
-    # X, y = mu.prepare_data()
-    X, y = mu.prepare_data(all_batches=False, batches=np.arange(1,5)) # for testing
+    X, y = mu.prepare_data()
+    # X, y = mu.prepare_data(all_batches=False, batches=np.arange(1,5)) # for testing
     print(f'Successfully prepared {len(X)} datapoints with input size {c.RESOLUTION}x{c.RESOLUTION}.\n')
 
     # Define model configurations
@@ -523,13 +519,13 @@ if __name__ == "__main__":
     # Define training parameters for each model
     train_params_list = [
         {
-            'batch_size': 512, # 32, 64
-            'epochs': 100, #5, 20, 50, 100
+            'batch_size': 32, # 32, 64
+            'epochs': 250, #5, 20, 50, 100
             'learning_rate': 0.001, #0.0005, 0.0001, 0.005, 0.001
-            'val_split': 0.1,
-            'test_split': 0.1,
+            'val_split': 0.2,
+            'test_split': 0.2,
             'random_state': 42,
-            'epsilon': 1,
+            'epsilon': 0.1,
             'init_weights': None,
         },
     ]  

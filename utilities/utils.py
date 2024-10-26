@@ -41,7 +41,7 @@ def generate_capacitance_matrices() -> tuple[np.ndarray, np.ndarray]:
         with a mean and standard deviation of 10% of mean.
     """
     mean = 1.0 #aF
-    std = 0.15
+    std = 0.25
     C_DG = np.random.normal(mean, std, (c.K,c.K))
     
     for i in range(K):
