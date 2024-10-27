@@ -59,7 +59,7 @@ def main():
         print(f"Successfully generated datapoints: {suc}/{N}.\n\n")
         
         if R>1:
-            print("Rest for 2 mintues, to decreser the tmep. of the CPU.")
-            time.sleep(120) # two mintes break
+            print("Rest for 1 mintues, to decreser the tmep. of the CPU.")
+            time.sleep(60) # two mintes break
 if __name__ == "__main__":
     main()

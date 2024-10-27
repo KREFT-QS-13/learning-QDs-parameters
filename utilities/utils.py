@@ -8,7 +8,7 @@ from PIL import Image
 import torchvision.transforms as transforms
 import torch
 
-import os
+import os, time
 import sys
 import shutil
 import re
@@ -41,11 +41,11 @@ def generate_capacitance_matrices() -> tuple[np.ndarray, np.ndarray]:
         with a mean and standard deviation of 10% of mean.
     """
     mean = 1.0 #aF
-    std = 0.25
+    std = 0.15
     C_DG = np.random.normal(mean, std, (c.K,c.K))
     
-    for i in range(K):
-        diag_const = np.random.choice([5.5,6,6.5,7,7.5,8,8.5,9,9.5,10,11,15,16,18,20])
+    for i in range(c.K):
+        diag_const = np.random.choice([5,6.5,7,7.5,8,8.5,9,9.5,10,11,12,15,16,20])
         C_DG[i,i] = np.random.normal(diag_const*mean, diag_const*std)
        
     C_m = np.random.normal(mean, std)
@@ -330,6 +330,15 @@ def generate_datapoint(args):
     K, x_vol, y_vol, ks, i, N = args
     print(f"Generating datapoint {i+1}/{N}:")
     try:
+        # Create a unique seed for this process
+        process_id = os.getpid()
+        current_time = int(time.time() * 1000)  # Current time in milliseconds
+        unique_seed = (process_id + current_time + i) % (2**32 - 1)  # Ensure it's within numpy's seed range
+        
+        # Set the seed for numpy and random
+        np.random.seed(unique_seed)
+        random.seed(unique_seed)
+        
         C_DD, C_DG, ks, cuts, x, y, csd, poly = generate_dataset(K, x_vol, y_vol, ks)
         fig, _ = plot_CSD(x, y, csd, poly)
         return (C_DD, C_DG, ks, cuts, x_vol, y_vol, fig)
