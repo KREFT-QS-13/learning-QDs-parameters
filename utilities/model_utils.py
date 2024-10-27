@@ -743,9 +743,6 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
         model_name = result['config']['params']['name']
         base_model = result['config']['params'].get('base_model', 'N/A')
         init_weights = True if result['train_params']['init_weights'] is not None else False  
-        batch_size = result['config']['params'].get('batch_size', 'N/A')
-        num_epochs = result['config']['params'].get('epochs', 'N/A')
-        learning_rate = result['config']['params'].get('learning_rate', 'N/A')
         epsilon = result['train_params']['epsilon']
 
         train_params = result['train_params']
@@ -760,7 +757,7 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
             'test_split': test_split,
             'seed': seed,
             'init_weights': init_weights,
-            'batch_size':  train_params.get('learning_rate', 'N/A'),
+            'batch_size':  train_params.get('batch_size', 'N/A'),
             'epochs':  train_params.get('epochs', 'N/A'),
             'learning_rate':  train_params.get('learning_rate', 'N/A'),
             'epsilon': epsilon,
