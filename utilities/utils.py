@@ -86,7 +86,7 @@ def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesk
     ax.set_xlim(x[0]*1e3, x[-1]*1e3)
     ax.set_ylim(y[0]*1e3, y[-1]*1e3)
     ax.axis('off')
-    plt.tight_layout()
+    plt.tight_layout(pad=0)
 
     return plt.gcf(), ax
 
