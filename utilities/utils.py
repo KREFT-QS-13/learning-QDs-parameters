@@ -83,7 +83,7 @@ def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesk
 
     ax.pcolormesh(1e3*x,1e3*y, csd_or_sensor) 
 
-    plot_polytopes(ax, polytopesks, axes_rescale=1e3, only_edges=True) #plot the polytopes
+    plot_polytopes(ax, polytopesks, axes_rescale=1e3, only_labels=True) #plot the polytopes
 
     ax.set_xlim(x[0]*1e3, x[-1]*1e3)
     ax.set_ylim(y[0]*1e3, y[-1]*1e3)
