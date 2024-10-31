@@ -27,9 +27,6 @@ RESOLUTION = c.RESOLUTION
 K = c.K
 
 
-def draw_digonal_elemnts(K:int, C_DD:np.ndarray, C_DG):
-    pass
-
 def generate_capacitance_matrices() -> tuple[np.ndarray, np.ndarray]:
     """
         Generate random capacitance matrices for a given number of dots K from a normal distribution.
@@ -44,15 +41,17 @@ def generate_capacitance_matrices() -> tuple[np.ndarray, np.ndarray]:
     std = 0.15
     C_DG = np.random.normal(mean, std, (c.K,c.K))
     
+    # list = [5,6.5,7,7.5,8,8.5,9,9.5,10,11,12,15,16,20]
+    list = [5,6.5,7,7.5,8,8.5,9]
+
     for i in range(c.K):
-        diag_const = np.random.choice([5,6.5,7,7.5,8,8.5,9,9.5,10,11,12,15,16,20])
+        diag_const = np.random.choice(list)
+
         C_DG[i,i] = np.random.normal(diag_const*mean, diag_const*std)
        
     C_m = np.random.normal(mean, std)
 
     C_DD = np.sum(C_DG, axis=1).T*np.eye(c.K) + C_m
-
-    # C_DD = (C_DD + C_DD.T)/2
 
     return C_DD, C_DG
 
@@ -81,14 +80,13 @@ def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesk
     plt.figure(figsize=(res/dpi, res/dpi), dpi=dpi)
     ax = plt.gca()
 
-    ax.pcolormesh(1e3*x,1e3*y, csd_or_sensor) 
-
-    plot_polytopes(ax, polytopesks, axes_rescale=1e3, only_edges=True) #plot the polytopes
+    ax.pcolormesh(1e3*x, 1e3*y, csd_or_sensor) #plot the background
+    plot_polytopes(ax, polytopesks, axes_rescale=1e3, only_edges=True, only_labels=True) #plot the polytopes
 
     ax.set_xlim(x[0]*1e3, x[-1]*1e3)
     ax.set_ylim(y[0]*1e3, y[-1]*1e3)
     ax.axis('off')
-    plt.tight_layout(pad=0)
+    plt.tight_layout()
 
     return plt.gcf(), ax
 
