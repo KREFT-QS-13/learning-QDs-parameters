@@ -109,7 +109,7 @@ class NoisySensorDot(BaseSensorSim):
             second_moment_g =  16*norm_pdf(0,eps, (self.fast_noise_var + var_logistic/2))* 0.5/np.sqrt(np.pi*var_logistic)
             std_g = np.sqrt(np.abs(second_moment_g - mean_g**2)/self.n_virtual_samples)
             
-
+            
             #now sample from the approximation
             g = beta*self.g_max*(mean_g + std_g*np.random.randn(*eps.shape))
             #average over the probability of each sample
