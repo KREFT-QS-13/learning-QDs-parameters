@@ -1,6 +1,4 @@
-import utilities.config as c
-import utilities.utils as u
-
+import sys
 import h5py, os, csv, json
 import numpy as np
 import pandas as pd
@@ -11,12 +9,23 @@ from torch.utils.data import DataLoader, TensorDataset
 import torch.nn as nn
 import torch.optim as optim
 from torchvision import transforms
-
+import torchvision.transforms.functional as F
+from PIL import Image, ImageEnhance
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from tqdm import tqdm
 
 import matplotlib.pyplot as plt
+
+import utilities.config as c
+import utilities.utils as u
+sys.path.append('./qdarts')
+from qdarts.experiment import Experiment
+from qdarts.plotting import plot_polytopes
+
+from models.transfer_CNN import TransferLearningCNN
+from models.vanilla_CNN import VanillaCNN
+
 
 # ----------------------------- LOAD DATA
 def load_datapoints(param_names:list, all_batches=True, batches:list=None):
@@ -165,17 +174,15 @@ def preprocess_data(dps:list, filtered:bool=True):
 
     return np.array(X), np.array(Y)
 
-def prepare_data(param_names:list=['csd', 'C_DD', 'C_DG'], all_batches=True, batches:list=None):
+def prepare_data(param_names:list=['csd', 'C_DD', 'C_DG'], all_batches=True, batches:list=None, datasize_cut:int=None):
     datapoints = load_datapoints(param_names, all_batches, batches)
     X, Y = preprocess_data(datapoints)
 
-    # if datasize > len(X) and all_batches:
-    #     raise ValueError(f"Datasize is greater than the number of datapoints available ({len(X)}).")
-    # elif datasize is None:
-    #     return torch.FloatTensor(X), torch.FloatTensor(Y)
-    # else:
-    #     return torch.FloatTensor(X[:datasize]), torch.FloatTensor(Y[:datasize])
-    return torch.FloatTensor(X), torch.FloatTensor(Y)
+    if datasize_cut is not None and datasize_cut > len(X):
+        print(f"Datasize is greater than the number of datapoints available ({len(X)}). Returning all datapoints.")
+        return torch.FloatTensor(X), torch.FloatTensor(Y)
+    else:
+        return torch.FloatTensor(X[:datasize_cut]), torch.FloatTensor(Y[:datasize_cut])
 
 def tensor_to_image(tensor, unnormalize=True):
     """
@@ -246,7 +253,8 @@ def divide_dataset(X, y, batch_size, val_split, test_split, random_state):
 
     return train_loader, val_loader, test_loader
 
-def train_model(model, X, y, batch_size=32, epochs=100, learning_rate=0.001, val_split=0.2, test_split=0.1, random_state=42, epsilon=1.0, init_weights=None):
+def train_model(model, X, y, batch_size=32, epochs=100, learning_rate=0.001, val_split=0.2, 
+                test_split=0.1, random_state=42, epsilon=1.0, init_weights=None):
     '''
         Train a model on the given data and hyperparameters.
     '''
@@ -446,7 +454,7 @@ def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir='
     for config in model_configs:
         model = config['model'](**config['params'])
         model_name = config['params']['name']
-        base_model = config['params'].get('base_model', 'default')
+        base_model = config['params'].get('base_model', 'CustomCNN')
         
         # Create a unique directory for this run under the base model directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -457,7 +465,7 @@ def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir='
         if train_params.get('init_weights'):
             init_weights_path = train_params['init_weights']
             if os.path.exists(init_weights_path):
-                model = mu.load_model_weights(model, init_weights_path)
+                model = load_model_weights(model, init_weights_path)
                 print(f"Loaded initial weights from {init_weights_path}")
             else:
                 print(f"Warning: Initial weights file not found at {init_weights_path}. Starting with random weights.")
@@ -781,3 +789,205 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
     print(f"Results saved/updated in {filename}")
 
 
+# ----------------------------- EVALUATION
+def explain_output(input_tensor, model_name, model_path):
+    """
+    Load a model and create explanatory visualizations (saliency map and Grad-CAM) for a given input.
+    For regression, we'll visualize the gradients with respect to the mean of all outputs.
+    
+    Args:
+        model_path (str): Path to the saved model weights
+        input_tensor (torch.Tensor): Input image tensor of shape (1, 1, H, W)
+    
+    Returns:
+        tuple: (saliency_overlay, gradcam_overlay, prediction, reconstructed_matrices)
+            - saliency_overlay (PIL.Image): Saliency map overlaid on input image
+            - gradcam_overlay (PIL.Image): Grad-CAM visualization overlaid on input image
+            - prediction (numpy.ndarray): Model's output prediction
+            - reconstructed_matrices (tuple): (C_DD, C_DG) reconstructed matrices
+    """
+    # Ensure input is on the correct device
+    input_tensor = input_tensor.to(c.DEVICE)
+    
+    # Load model architecture and weights
+    if 'resnet' == model_name:
+        model = TransferLearningCNN(name="transfer_cnn")
+    else:
+        model = VanillaCNN(name="vanilla_cnn")
+    
+    model.load_state_dict(torch.load(model_path, map_location=c.DEVICE))
+    model = model.to(c.DEVICE)
+    model.eval()
+    
+    # Get model prediction
+    with torch.no_grad():
+        prediction = model(input_tensor)
+        prediction = prediction.cpu().numpy()[0]  # Get first batch item
+    
+    # Generate saliency map
+    saliency = saliency_map(model, input_tensor.clone())
+    
+    # Generate Grad-CAM visualization
+    gradcam = grad_cam(model, input_tensor.clone())
+    
+    # Convert input tensor to range [0, 1] for visualization
+    input_image = input_tensor.squeeze().cpu()
+    input_image = (input_image - input_image.min()) / (input_image.max() - input_image.min())
+    input_image = input_image.unsqueeze(0).repeat(3, 1, 1)  # Convert to RGB
+    
+    # Create overlays
+    saliency_overlay = overlay_heatmap_on_image(input_image, saliency, alpha=0.7)
+    gradcam_overlay = overlay_heatmap_on_image(input_image, gradcam, alpha=0.7)
+    
+    # Reconstruct C_DD and C_DG matrices from prediction
+    reconstructed_matrices = reconstruct_capacitance_matrices(prediction)
+    
+    return saliency_overlay, gradcam_overlay, prediction, reconstructed_matrices
+
+def saliency_map(model, input_tensor):
+    """
+    Generate a saliency map for the given input in a regression task.
+    We'll use the mean of all outputs as the target for visualization.
+    
+    Args:
+        model (nn.Module): The neural network model
+        input_tensor (torch.Tensor): Input tensor of shape (1, 1, H, W)
+    
+    Returns:
+        numpy.ndarray: Saliency map of shape (H, W)
+    """
+    input_tensor.requires_grad_()
+    
+    # Forward pass
+    output = model(input_tensor)
+    # Use mean of all outputs for regression visualization
+    target = output.mean()
+    
+    # Backward pass
+    model.zero_grad()
+    target.backward()
+    
+    # Get gradients and convert to saliency map
+    saliency = input_tensor.grad.abs().squeeze().cpu().numpy()
+    
+    # Normalize to [0, 1]
+    saliency = (saliency - saliency.min()) / (saliency.max() - saliency.min() + 1e-8)
+    
+    return saliency
+
+def grad_cam(model, input_tensor):
+    """
+    Generate a Grad-CAM visualization for the given input in a regression task.
+    We'll use the mean of all outputs for visualization.
+    
+    Args:
+        model (nn.Module): The neural network model
+        input_tensor (torch.Tensor): Input tensor of shape (1, 1, H, W)
+    
+    Returns:
+        numpy.ndarray: Grad-CAM heatmap of shape (H, W)
+    """
+    # Get the last convolutional layer
+    if hasattr(model, 'base_model'):  # TransferLearningCNN
+        target_layer = model.base_model.layer4[-1]
+    else:  # VanillaCNN
+        target_layer = [m for m in model.network.modules() if isinstance(m, nn.Conv2d)][-1]
+    
+    # Register hooks to get gradients and activations
+    gradients = []
+    activations = []
+    
+    def save_gradient(grad):
+        gradients.append(grad)
+    
+    def save_activation(module, input, output):
+        activations.append(output)
+    
+    # Register hooks
+    handle_activation = target_layer.register_forward_hook(save_activation)
+    handle_gradient = target_layer.register_backward_hook(
+        lambda module, grad_input, grad_output: save_gradient(grad_output[0])
+    )
+    
+    # Forward pass
+    output = model(input_tensor)
+    target = output.mean()  # Use mean of all outputs for regression visualization
+    
+    # Backward pass
+    model.zero_grad()
+    target.backward()
+    
+    # Remove hooks
+    handle_activation.remove()
+    handle_gradient.remove()
+    
+    # Calculate Grad-CAM
+    gradients = gradients[0].cpu().data.numpy()[0]  # [C, H, W]
+    activations = activations[0].cpu().data.numpy()[0]  # [C, H, W]
+    
+    weights = np.mean(gradients, axis=(1, 2))  # [C]
+    cam = np.sum(weights[:, np.newaxis, np.newaxis] * activations, axis=0)  # [H, W]
+    
+    # ReLU and normalize
+    cam = np.maximum(cam, 0)
+    cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
+    
+    # Resize to input size
+    cam = Image.fromarray((cam * 255).astype(np.uint8))
+    cam = cam.resize((input_tensor.shape[3], input_tensor.shape[2]), Image.BICUBIC)
+    cam = np.array(cam) / 255.0
+    
+    return cam
+
+def overlay_heatmap_on_image(image: torch.Tensor, heatmap: np.ndarray, alpha: float = 0.5, colormap: str = 'jet') -> Image:
+    """
+    Overlays a heatmap on an original image.
+
+    Args:
+        image (torch.Tensor): Original image tensor of shape (3, H, W) in the range [0, 1].
+        heatmap (np.ndarray): Heatmap array of shape (H, W) with values in range [0, 1].
+        alpha (float): Transparency factor for the heatmap overlay. 0 is fully transparent, 1 is fully opaque.
+        colormap (str): Colormap to use for heatmap (e.g., 'jet').
+
+    Returns:
+        Image: PIL Image with the heatmap overlay.
+    """
+    # Convert the image tensor to a PIL image
+    image_pil = Image.fromarray((image.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
+
+    # Normalize heatmap if it is not already in range [0, 1]
+    if heatmap.max() > 1:
+        heatmap = heatmap / heatmap.max()
+
+    # Convert heatmap to a color map using PIL
+    heatmap_colored = Image.fromarray((plt.cm.get_cmap(colormap)(heatmap)[:, :, :3] * 255).astype(np.uint8))
+    heatmap_colored = heatmap_colored.resize(image_pil.size, Image.LANCZOS)
+
+    # Blend the original image and the heatmap
+    heatmap_overlay = Image.blend(image_pil, heatmap_colored, alpha)
+
+    return heatmap_overlay
+
+def generate_csd_from_prediction(prediction):
+    C_DD, C_DG = reconstruct_capacitance_matrices(prediction)
+    capacitance_config = {
+        "C_DD" : C_DD,  #dot-dot capacitance matrix
+        "C_Dg" : C_DG,  #dot-gate capacitance matrix
+        "ks" : None,       
+    }
+
+    cuts = u.get_cut(c.K)
+    # x_vol = np.linspace(-c.V_G, c.V_G, c.RESOLUTION)
+    x_vol = np.linspace(0, 0.05, 500)
+    y_vol = np.linspace(0, 0.05, 500)
+
+    xks, yks, csd_dataks, polytopesks, _, _ =  Experiment(capacitance_config).generate_CSD(
+                                                x_voltages = x_vol,  #V
+                                                y_voltages = y_vol,  #V
+                                                plane_axes = cuts,
+                                                compute_polytopes = True,
+                                                use_virtual_gates = False)   
+    
+    pred_csd = u.plot_CSD(xks, yks, csd_dataks, polytopesks)
+
+    return pred_csd

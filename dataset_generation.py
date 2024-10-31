@@ -3,7 +3,7 @@ import sys, time
 import numpy as np
 import multiprocessing as mp
 
-from utilities.config import K as config_K, set_global_K
+from utilities.config import K as config_K, set_global_K, set_global_NOISE
 import utilities.utils as u
 
 def main():
@@ -25,15 +25,17 @@ def main():
     
     parser.add_argument('--K', type=np.int32, default=config_K, 
                         help='The number of quantum dots in the system. Default vaule 2.')
-    #TODO: Later add noise parameter
-    # parser.add_argument('--Noise', type=, help='')
 
+    parser.add_argument('--Noise', type=bool, default=False, help='If True, the dataset will be generated with noise.')
+    
     args = parser.parse_args()
     N = args.N
     R = args.R
     K = args.K
+    Noise = args.Noise
 
     set_global_K(K)
+    set_global_NOISE(Noise)
 
     for r in range(R):
         print(f"Batch number: {r+1}/{R}.")

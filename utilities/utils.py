@@ -74,14 +74,15 @@ def get_cut(K: int):
     return c
     
 
-def plot_CSD(x: np.ndarray, y: np.ndarray, csd: np.ndarray, polytopesks: list[np.ndarray], res:int=RESOLUTION, dpi:int=DPI):
+def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesks: list[np.ndarray], res:int=RESOLUTION, dpi:int=DPI):
     """
         Plot the charge stability diagram (CSD) (res by res, default 256 by 256).
     """
     plt.figure(figsize=(res/dpi, res/dpi), dpi=dpi)
     ax = plt.gca()
 
-    ax.pcolormesh(1e3*x, 1e3*y, csd) #plot the background
+    ax.pcolormesh(1e3*x,1e3*y, csd_or_sensor) 
+
     plot_polytopes(ax, polytopesks, axes_rescale=1e3, only_edges=True) #plot the polytopes
 
     ax.set_xlim(x[0]*1e3, x[-1]*1e3)
