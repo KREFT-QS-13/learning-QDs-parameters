@@ -27,7 +27,139 @@ RESOLUTION = c.RESOLUTION
 K = c.K
 
 
-def generate_capacitance_matrices() -> tuple[np.ndarray, np.ndarray]:
+def transform_to_cartesian(r:float, theta:float) -> tuple[float, float]:
+    """
+        Transform polar coordinates to Cartesian coordinates.
+    """
+    return r*np.cos(theta), r*np.sin(theta)
+
+def dist_between_points(i:tuple[int, int], j:tuple[int, int]) -> float:
+    """
+        Get the distance between two points.
+    """
+    return round(c.d_DD*np.sqrt((i[0]-j[0])**2 + (i[1]-j[1])**2), 4)
+
+def get_dots_indices(device:np.ndarray) -> list[tuple[int, int]]:
+    """
+        Get the indices of the dots in the device.
+    """
+    return [(x,y) for x,y in zip(np.where(device == 1)[0], np.where(device == 1)[1])]
+
+def get_dots_coordinates(device:np.ndarray) -> list[tuple[int, int]]:
+    """
+        Get the coordinates of the dots in the device.
+    """
+    return [(x,-y) for x,y in zip(np.where(device == 1)[1], np.where(device == 1)[0])]
+
+def set_dots_number_based_on_device(device:np.ndarray, S:int) -> int:
+    """
+        Set the number of dots based on the device size and the number of sensors S.
+    """
+    c.set_global_K(len(get_dots_indices(device)) + S)
+
+def get_centroid_of_device(device:np.ndarray) -> tuple[float, float]:
+    """
+        Get the centroid of the device as a point in the Cartesian coordinate system.
+
+    """ 
+    x_c = np.mean(get_dots_indices(device), axis=0)[1]
+    y_c = -np.mean(get_dots_indices(device), axis=0)[0]
+    return (x_c, y_c), np.sqrt(x_c**2 + y_c**2)
+
+def check_sensor_in_correct_region(r0:float, theta0:float, device:np.ndarray, r_min:float=c.r_min, r_max:float=c.r_max) -> bool:
+    centroid, _ = get_centroid_of_device(device)
+    x_c, y_c = centroid
+    s_x, s_y = transform_to_cartesian(r0, theta0)
+
+    return r_min < np.sqrt((s_x-x_c)**2 + (s_y-y_c)**2) <= r_max
+
+def draw_random(S:int, device:np.ndarray) -> list[float]:
+    """
+        Draw random r0 for S sensors.
+    """
+    nx, ny = device.shape
+    r_min = 0.5*np.sqrt(nx**2 + ny**2)*c.d_DD * 1.5 # or c.r_min
+    r_max = c.r_max
+
+    list_r0 = []
+    list_theta0 = []
+    while len(list_r0) < S:
+        r0 = np.random.uniform(0, r_max)
+        theta0 = np.random.uniform(0, 2*np.pi)
+        if check_sensor_in_correct_region(r0, theta0, device, r_min=r_min):
+            list_r0.append(r0)
+            list_theta0.append(theta0)
+
+   
+    return list_r0, list_theta0
+
+def set_sensors_positions(S:int, device:np.ndarray, list_r0:list[float]=None, list_theta0:list[float]=None) -> tuple[float, float]:
+    """
+        Return the positions of the sensors in polar coordinates.
+    """
+    if list_r0 is None and list_theta0 is None:
+        list_r0, list_theta0 = draw_random(S, device)
+
+    return [(r0,t0)  for r0, t0 in zip(list_r0, list_theta0)]
+
+def get_dist_dot_sensor(r0:float, theta0:float, nx:int, ny:int) -> tuple[float, float]:
+    """
+        Return the distance between a dot and a sensor
+    """
+    theta_0i = np.arctan(ny/nx) if nx != 0 else np.pi/2
+    r_0i = c.d_DD*np.sqrt(nx**2 + ny**2)
+    theta_si = theta_0i + theta0
+    
+    return np.sqrt( r0**2 + r_0i**2 - 2*r0*r_0i*np.cos(theta_si))
+
+def get_device_distance_matrix(device:np.ndarray, sensors:list[tuple[float, float]]) -> np.ndarray:
+    """
+        Get the distance matrix for the device.
+    """
+    dist_matrix = np.zeros((c.K,c.K))
+    sensor_corr = [transform_to_cartesian(r,t) for r,t in sensors]
+    sensor_corr = [(x/c.d_DD, y/c.d_DD)  for x,y in sensor_corr]
+    
+    system_corr = get_dots_coordinates(device) + sensor_corr
+
+    for i in range(len(system_corr)):
+        for j in range(i, len(system_corr)):
+            dist_matrix[i,j] = dist_between_points(system_corr[i], system_corr[j])
+            dist_matrix[j,i] = dist_matrix[i,j]
+    
+    return dist_matrix
+
+def exp_decay_model(dist_matrix:np.ndarray, mean:float=1.0, std:float=0.15, model:int=0) -> np.ndarray:
+    """
+        Exponential decay model for the capacitance matrix.
+    """
+    assert c.p_dd < 1, "The decrese at  of dot-dot interaction must be less than 1!"
+    
+    if model == 0:
+        decay = lambda x,p: np.exp(x*np.log(p))
+    elif model == 1:
+        decay = lambda x,p: p**x
+    else:
+        raise ValueError("Invalid model number!")
+    
+    list = [5,6.5,7,7.5,8,8.5,9,9.5,10,11,12,15,16,20]
+    mag_conts = np.random.choice(list, size=c.K)
+    
+    C_dd_prime, C_dg = np.identity(c.K), np.identity(c.K)
+    C_dd_prime[np.eye(C_dd_prime.shape[0], dtype=bool)] = [round(np.random.normal(c*mean, c*std), 4) for c in mag_conts]
+    C_dg[np.eye(C_dg.shape[0], dtype=bool)] = [round(np.random.normal(c*mean, c*std), 4) for c in mag_conts]
+
+
+    for i in range(c.K):
+        for j in range(i+1, c.K):
+            C_dd_prime[i,j] = C_dd_prime[j,i] = round(np.sqrt(C_dd_prime[i,i]*C_dd_prime[j,j])*decay(dist_matrix[i,j]/c.d_DD, c.p_dd), 4)
+            C_dg[i,j] = C_dg[j,i] = round(np.sqrt(C_dd_prime[i,i]*C_dd_prime[j,j])*decay(dist_matrix[i,j]/c.d_DD, c.p_dg), 4)
+
+
+    return C_dd_prime, C_dg
+
+
+def generate_capacitance_matrices(device:np.ndarray=None) -> tuple[np.ndarray, np.ndarray]:
     """
         Generate random capacitance matrices for a given number of dots K from a normal distribution.
         
@@ -41,19 +173,39 @@ def generate_capacitance_matrices() -> tuple[np.ndarray, np.ndarray]:
     std = 0.15
     C_DG = np.random.normal(mean, std, (c.K,c.K))
     
-    # list = [5,6.5,7,7.5,8,8.5,9,9.5,10,11,12,15,16,20]
-    list = [5,6.5,7,7.5,8,8.5,9]
+    list = [5,6.5,7,7.5,8,8.5,9,9.5,10,11,12,15,16,20]
+    # list = [5,6.5,7,7.5,8,8.5,9]
 
-    for i in range(c.K):
-        diag_const = np.random.choice(list)
+    if not c.NOISE:
+        for i in range(c.K):
+            diag_const = np.random.choice(list)
 
-        C_DG[i,i] = np.random.normal(diag_const*mean, diag_const*std)
-       
-    C_m = np.random.normal(mean, std)
+            C_DG[i,i] = np.random.normal(diag_const*mean, diag_const*std)
+        
+            C_m = np.zeros((c.K, c.K)) 
+            mask = ~np.eye(C_m.shape[0], dtype=bool)
+            C_m[mask] = np.random.normal(mean, std, c.K*(c.K-1))
 
-    C_DD = np.sum(C_DG, axis=1).T*np.eye(c.K) + C_m
+            C_m = (C_m + C_m.T)/2
 
-    return C_DD, C_DG
+        C_DD = np.sum(C_DG, axis=1).T*np.eye(c.K) + C_m
+
+        return C_DD, C_DG
+    elif device is not None:
+        N = len(get_dots_indices(device)) # Number of dots
+        S = c.S # Number of sensors
+        sensors = set_sensors_positions(S, device)
+        dist_matrix = get_device_distance_matrix(device, sensors)
+
+        C_DD, C_DG = exp_decay_model(dist_matrix, mean, std, model=1)
+        
+        # C_DD = np.sum(C_DG, axis=1).T*np.eye(c.K) + (np.sum(C_DD, axis=1)-np.diag(C_DD))*np.eye(c.K) + np.diag(C_DD)*np.eye(c.K) # Sum of the rows of C_DG  + C_m + self-capacitance
+        # Cm = np.sum(x[:-S,:-S], axis=1) ??
+        C_DD = C_DD + np.sum(C_DG, axis=1).T*np.eye(c.K) + (np.sum(C_DD, axis=1)-np.diag(C_DD))*np.eye(c.K) 
+
+        return C_DD, C_DG
+    else:
+        raise ValueError("Device is not provided! For noise generation you need to provide the device!")
 
 def generate_dummy_data(K:int) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -96,7 +248,7 @@ def generate_dataset(K: int, x_vol: np.ndarray, y_vol: np.ndarray, ks: int=0):
           ranges of voltages to create needed data for CSD creation.
     """
     C_DD, C_DG = generate_capacitance_matrices()
-    # C_DD, C_DG = generate_dummy_data(K)
+    # C_DD, C_DG = generaSte_dummy_data(K)
 
     capacitance_config = {
         "C_DD" : C_DD,  #dot-dot capacitance matrix
@@ -356,3 +508,63 @@ def ensure_dir_exists(path):
     if not os.path.exists(path):
         os.makedirs(path)
         print(f"Created directory: {path}")
+
+def plot_device_lattice(device: np.ndarray, sensors: list[tuple[int, int]], figsize=(4, 4), dot_size=25, show_grid=True):
+    """
+    Plot dots in a lattice according to the device configuration.
+    
+    Args:
+        device (np.ndarray): Binary array where 1s represent dots
+        figsize (tuple): Figure size in inches (default: (4, 4))
+        dot_size (int): Size of the dots in the plot (default: 100)
+        show_grid (bool): Whether to show the grid lines (default: True)
+    
+    Returns:
+        tuple: (fig, ax) matplotlib figure and axis objects
+    """
+    # Get dot coordinates
+    dot_coords = get_dots_coordinates(device)
+    
+    # Create figure and axis
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # Plot dots
+    x_coords = [coord[0] for coord in dot_coords]
+    y_coords = [coord[1] for coord in dot_coords]
+    
+    # Plot dots with numbers
+    for i, (x, y) in enumerate(zip(x_coords, y_coords)):
+        ax.scatter(x, y, s=dot_size, c='black',  marker='o', zorder=2)
+        # ax.text(x, y, str(i), color='black', ha='center', va='center', fontweight='bold')
+    
+    for i,s in enumerate(sensors):
+        x, y = transform_to_cartesian(s[0], s[1])
+        x_coords.append(x/c.d_DD)
+        y_coords.append(y/c.d_DD)
+        # ax.scatter(x/c.d_DD, y/c.d_DD, s=dot_size, c='red', marker='*', zorder=2)
+        ax.text(x/c.d_DD, y/c.d_DD, 's'+str(i), color='red', ha='center', va='center', fontsize=12)
+
+
+    # Set equal aspect ratio
+    ax.set_aspect('equal')
+    
+    # Set grid
+    if show_grid:
+        ax.grid(True, linestyle='--', alpha=0.7, zorder=1)
+    
+    # Set limits with some padding
+    x_min, x_max = min(x_coords), max(x_coords)
+    y_min, y_max = min(y_coords), max(y_coords)
+    padding = 1
+    ax.set_xlim(x_min - padding, x_max + padding)
+    ax.set_ylim(y_min - padding, y_max + padding)
+    
+    # Set labels
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_title('Device Dot Configuration')
+    
+    plt.tight_layout()
+    return fig, ax
+
+

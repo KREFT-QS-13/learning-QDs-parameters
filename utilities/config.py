@@ -1,14 +1,42 @@
 import os 
 import torch
 
-# PATH_0 = "./datasets/"
-PATH_0 = "./ALICE/"
-
+PATH_0 = "./datasets/"
+# PATH_0 = "./ALICE/"
 
 DPI = 100
 RESOLUTION = 256 #96 256
 
-K = 2
+d_DD = 100 # nm
+d_DG = 100 # nm
+p_dd = 0.4
+p_dg = 0.15
+
+N = 2 # Number of dots (in the device)
+def set_global_N(value):
+    global N,K
+    K -= N
+    N = value
+    K += N
+
+def get_global_N():
+    return N
+
+S = 0 # Number of sensors
+def set_global_S(value):
+    global S,K
+    K -= S
+    S = value
+    K += S
+
+def get_global_S():
+    return S
+
+r_min = 2*d_DD
+r_max = 6*d_DD
+
+
+K = N+S # Total number of dots
 def set_global_K(value):
     global K
     K = value
@@ -22,7 +50,7 @@ def set_global_NOISE(value):
     NOISE = value
 
 if NOISE:
-    PATH = os.path.join(PATH_0, 'noise', 'K-'+str(K), str(RESOLUTION)+'x'+str(RESOLUTION))
+    PATH = os.path.join(PATH_0, 'noise', 'N-'+str(N)+'_S-'+str(S), str(RESOLUTION)+'x'+str(RESOLUTION))
 else:
     PATH = os.path.join(PATH_0, 'K-'+str(K), str(RESOLUTION)+'x'+str(RESOLUTION))
 

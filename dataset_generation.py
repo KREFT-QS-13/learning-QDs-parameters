@@ -28,13 +28,24 @@ def main():
 
     parser.add_argument('--Noise', type=bool, default=False, help='If True, the dataset will be generated with noise.')
     
+    parser.add_argument('--device', type=np.ndarray, default=None, help='The device to generate the dataset for.')
+
+    parser.add_argument('--S', type=np.ndarray, default=None, help='The number of sensors in the system.')
+
+
     args = parser.parse_args()
     N = args.N
     R = args.R
     K = args.K
-    Noise = args.Noise
 
-    set_global_K(K)
+    Noise = args.Noise
+    if not Noise and (args.device is not None or args.S is not None):
+        set_global_K(K)
+        raise ValueError("The device and the number of sensors must be provided when noise is not used.")
+    else:
+        device = args.device
+        S = args.S
+        set_global_K(len(u.get_device_positions(device)) + S)
     set_global_NOISE(Noise)
 
     for r in range(R):

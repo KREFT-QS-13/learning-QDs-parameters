@@ -790,7 +790,7 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
 
 
 # ----------------------------- EVALUATION
-def explain_output(input_tensor, model_name, model_path):
+def explain_output(model_path, input_tensor):
     """
     Load a model and create explanatory visualizations (saliency map and Grad-CAM) for a given input.
     For regression, we'll visualize the gradients with respect to the mean of all outputs.
@@ -810,19 +810,31 @@ def explain_output(input_tensor, model_name, model_path):
     input_tensor = input_tensor.to(c.DEVICE)
     
     # Load model architecture and weights
-    if 'resnet' == model_name:
+    if 'resnet' in model_path.lower():
         model = TransferLearningCNN(name="transfer_cnn")
     else:
         model = VanillaCNN(name="vanilla_cnn")
     
-    model.load_state_dict(torch.load(model_path, map_location=c.DEVICE))
+    # Load state dict with better error handling
+    try:
+        state_dict = torch.load(model_path, map_location=c.DEVICE)
+        model.load_state_dict(state_dict)
+    except RuntimeError as e:
+        # If loading fails, try loading with weights_only=True
+        try:
+            state_dict = torch.load(model_path, map_location=c.DEVICE, weights_only=True)
+            model.load_state_dict(state_dict)
+        except Exception as e2:
+            print(f"Error loading model weights: {e2}")
+            raise
+    
     model = model.to(c.DEVICE)
     model.eval()
     
     # Get model prediction
     with torch.no_grad():
         prediction = model(input_tensor)
-        prediction = prediction.cpu().numpy()[0]  # Get first batch item
+        prediction = prediction.cpu().numpy()[0]
     
     # Generate saliency map
     saliency = saliency_map(model, input_tensor.clone())
