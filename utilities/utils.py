@@ -213,18 +213,18 @@ def generate_dummy_data(K:int) -> tuple[np.ndarray, np.ndarray]:
     """
     return np.identity(K), np.identity(K)
 
-def get_cut(K: int):
+def get_cut():
     """
-        Generate all possible cuts multidimensional volatge space based on the number of dots K.
+        Generate a 2d cut constructed from standard basis vectors.
     """
     #TODO: Wirte a function that based on K dots will generate diffrent cuts
-    c = [[1,0],[0,1]]
-    # c =  [[1,1],[1,-1]]
-    # c = [[1,0],[1,-0.5]]
-    # c = [[1,-1],[1,1]]
-    return c
+    cut = np.zeros((2,c.K))
+    indices = np.random.choice(np.arange(c.N), 2, replace=False)
+    cut[tuple(zip(*enumerate(indices)))] = 1
+    cut = cut[np.argmax(cut, axis=1).argsort()] 
     
-
+    return cut
+    
 def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesks: list[np.ndarray], res:int=RESOLUTION, dpi:int=DPI):
     """
         Plot the charge stability diagram (CSD) (res by res, default 256 by 256).
@@ -256,7 +256,7 @@ def generate_dataset(K: int, x_vol: np.ndarray, y_vol: np.ndarray, ks: int=0):
         "ks" : ks,       
     }
 
-    cuts = get_cut(K)
+    cuts = get_cut()
 
     xks, yks, csd_dataks, polytopesks, _, _ =  Experiment(capacitance_config).generate_CSD(
                                                 x_voltages = x_vol,  #V
