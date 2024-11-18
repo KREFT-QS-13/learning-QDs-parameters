@@ -3,7 +3,7 @@ import sys, time
 import numpy as np
 import multiprocessing as mp
 
-from utilities.config import K as config_K, set_global_K, set_global_NOISE
+import utilities.config as c
 import utilities.utils as u
 
 def main():
@@ -23,37 +23,44 @@ def main():
     parser.add_argument('--R', type=np.int32, default=1, 
                         help='The number of batches to to generate. Default vaule 1.')
     
-    parser.add_argument('--K', type=np.int32, default=config_K, 
+    parser.add_argument('--K', type=np.int32, default=c.K, 
                         help='The number of quantum dots in the system. Default vaule 2.')
 
     parser.add_argument('--Noise', type=bool, default=False, help='If True, the dataset will be generated with noise.')
     
-    parser.add_argument('--device', type=np.ndarray, default=None, help='The device to generate the dataset for.')
+    parser.add_argument('--device', type=list, default=np.ones((1,2)), help='The device to generate the dataset for.')
 
-    parser.add_argument('--S', type=np.ndarray, default=None, help='The number of sensors in the system.')
+    parser.add_argument('--S', type=int, default=1, help='The number of sensors in the system.')
 
 
     args = parser.parse_args()
     N = args.N
     R = args.R
     K = args.K
+    c.set_global_K(K)
 
     Noise = args.Noise
-    if not Noise and (args.device is not None or args.S is not None):
-        set_global_K(K)
+    c.set_global_NOISE(Noise)
+
+    if Noise and (args.device is None or args.S is None):
         raise ValueError("The device and the number of sensors must be provided when noise is not used.")
     else:
-        device = args.device
-        S = args.S
-        set_global_K(len(u.get_device_positions(device)) + S)
-    set_global_NOISE(Noise)
-
+        device = np.array(args.device)
+        S = args.S 
+        c.set_global_S(S)
+        
+        N_dots = len(u.get_dots_indices(device))
+        c.set_global_N(N_dots)
+        c.set_global_K(N_dots + S)
+            
+    assert c.K == c.N + c.S, "The number of dots and sensors must add up to the total number of dots."
+    
     for r in range(R):
         print(f"Batch number: {r+1}/{R}.")
         main_start = time.time()
         u.create_paths(K)
         # Prepare arguments for multiprocessing
-        pool_args = [(K, x_vol, y_vol, ks, i, N) for i in range(N)]
+        pool_args = [(x_vol, y_vol, ks, device, i, N) for i in range(N)]
         
         # Create a multiprocessing pool
         with mp.Pool(processes=mp.cpu_count()) as pool:
@@ -63,8 +70,8 @@ def main():
         for i, result in enumerate(results):
             if result is not None:
                 suc += 1
-                C_DD, C_DG, ks, cuts, x_vol, y_vol, fig = result
-                u.save_datapoints(K, C_DD, C_DG, ks, x_vol_range, y_vol_range, cuts, fig)
+                C_DD, C_DG, ks, cuts, x_vol, y_vol, fig, fig_gradient = result
+                u.save_datapoints(K, C_DD, C_DG, ks, x_vol_range, y_vol_range, cuts, fig, fig_gradient, device)
                 print(f"Successfully generated datapoints: {suc}/{N} ({i+1}/{N}).\n\n")
 
         final_time = round(np.abs(main_start-time.time()),3)
@@ -74,5 +81,7 @@ def main():
         if R>1:
             print("Rest for 1 mintues, to decreser the tmep. of the CPU.")
             time.sleep(60) # two mintes break
+        
+        print(f"Batch number finished: {r+1}/{R}.")
 if __name__ == "__main__":
     main()

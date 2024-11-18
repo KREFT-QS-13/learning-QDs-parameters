@@ -14,20 +14,18 @@ p_dg = 0.15
 
 N = 2 # Number of dots (in the device)
 def set_global_N(value):
-    global N,K
-    K -= N
+    global N, K
     N = value
-    K += N
+    K = N + S  # Update K whenever N changes
 
 def get_global_N():
     return N
 
 S = 0 # Number of sensors
 def set_global_S(value):
-    global S,K
-    K -= S
+    global S, K
     S = value
-    K += S
+    K = N + S  # Update K whenever S changes
 
 def get_global_S():
     return S
@@ -46,7 +44,8 @@ def get_global_K():
 
 NOISE = False
 def set_global_NOISE(value):
-    global NOISE
+    global NOISE, S
+    S = 1
     NOISE = value
 
 if NOISE:

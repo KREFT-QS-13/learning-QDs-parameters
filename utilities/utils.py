@@ -43,13 +43,25 @@ def get_dots_indices(device:np.ndarray) -> list[tuple[int, int]]:
     """
         Get the indices of the dots in the device.
     """
-    return [(x,y) for x,y in zip(np.where(device == 1)[0], np.where(device == 1)[1])]
+    device = np.asarray(device)
+
+    if device.ndim != 2:
+        raise ValueError(f"Device array must be 2D, got shape {device.shape}")
+    
+    indices = np.where(device == 1)
+    return list(zip(indices[0], indices[1]))
 
 def get_dots_coordinates(device:np.ndarray) -> list[tuple[int, int]]:
     """
         Get the coordinates of the dots in the device.
     """
-    return [(x,-y) for x,y in zip(np.where(device == 1)[1], np.where(device == 1)[0])]
+    device = np.asarray(device)
+    
+    if device.ndim != 2:
+        raise ValueError(f"Device array must be 2D, got shape {device.shape}")
+    
+    indices = np.where(device == 1)    
+    return list(zip(indices[1], -indices[0]))  # Note: x = col, y = -row
 
 def set_dots_number_based_on_device(device:np.ndarray, S:int) -> int:
     """
@@ -169,6 +181,9 @@ def generate_capacitance_matrices(device:np.ndarray=None) -> tuple[np.ndarray, n
         The off-diagonal elements of C_DD and C_DG are drawn from a normal distribution 
         with a mean and standard deviation of 10% of mean.
     """
+    if c.NOISE and device is None:
+        raise ValueError("Device is not provided! For noise generation you need to provide the device!")
+
     mean = 1.0 #aF
     std = 0.15
     C_DG = np.random.normal(mean, std, (c.K,c.K))
@@ -189,7 +204,6 @@ def generate_capacitance_matrices(device:np.ndarray=None) -> tuple[np.ndarray, n
             C_m = (C_m + C_m.T)/2
 
         C_DD = np.sum(C_DG, axis=1).T*np.eye(c.K) + C_m
-
         return C_DD, C_DG
     elif device is not None:
         N = len(get_dots_indices(device)) # Number of dots
@@ -197,7 +211,7 @@ def generate_capacitance_matrices(device:np.ndarray=None) -> tuple[np.ndarray, n
         sensors = set_sensors_positions(S, device)
         dist_matrix = get_device_distance_matrix(device, sensors)
 
-        C_DD, C_DG = exp_decay_model(dist_matrix, mean, std, model=1)
+        C_DD, C_DG = exp_decay_model(dist_matrix, mean, std, model=0)
         
         # C_DD = np.sum(C_DG, axis=1).T*np.eye(c.K) + (np.sum(C_DD, axis=1)-np.diag(C_DD))*np.eye(c.K) + np.diag(C_DD)*np.eye(c.K) # Sum of the rows of C_DG  + C_m + self-capacitance
         # Cm = np.sum(x[:-S,:-S], axis=1) ??
@@ -217,9 +231,11 @@ def get_cut():
     """
         Generate a 2d cut constructed from standard basis vectors.
     """
-    #TODO: Wirte a function that based on K dots will generate diffrent cuts
-    cut = np.zeros((2,c.K))
-    indices = np.random.choice(np.arange(c.N), 2, replace=False)
+    #TODO: Extend to more complex cuts
+    cut = np.zeros((2,c.get_global_K()))
+    print(c.get_global_K(), c.get_global_N())
+    
+    indices = np.random.choice(np.arange(c.get_global_N()), 2, replace=False)
     cut[tuple(zip(*enumerate(indices)))] = 1
     cut = cut[np.argmax(cut, axis=1).argsort()] 
     
@@ -242,30 +258,73 @@ def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesk
 
     return plt.gcf(), ax
 
-def generate_dataset(K: int, x_vol: np.ndarray, y_vol: np.ndarray, ks: int=0):
-    """
-        Run the QDarts experiment for a given number of dots K and
-          ranges of voltages to create needed data for CSD creation.
-    """
-    C_DD, C_DG = generate_capacitance_matrices()
-    # C_DD, C_DG = generaSte_dummy_data(K)
+def generate_experiment_config(C_DD:np.ndarray, C_DG:np.ndarray):
+    tunnel_couplings = np.zeros((c.K,c.K))
+    mask = ~np.eye(tunnel_couplings.shape[0], dtype=bool)
+    tunnel_couplings[mask] = 100*1e-6
 
     capacitance_config = {
         "C_DD" : C_DD,  #dot-dot capacitance matrix
         "C_Dg" : C_DG,  #dot-gate capacitance matrix
-        "ks" : ks,       
+        "ks" : None,       #distortion of Coulomb peaks. NOTE: If None -> constant size of Coublomb peak 
     }
 
-    cuts = get_cut()
+    tunneling_config = {
+        "tunnel_couplings": tunnel_couplings, #tunnel coupling matrix
+        "temperature": 0.1,                   #temperature in Kelvin
+        "energy_range_factor": 5,  #energy scale for the Hamiltonian generation. NOTE: Smaller -> faster but less accurate computation 
+    }
 
-    xks, yks, csd_dataks, polytopesks, _, _ =  Experiment(capacitance_config).generate_CSD(
-                                                x_voltages = x_vol,  #V
-                                                y_voltages = y_vol,  #V
-                                                plane_axes = cuts,
-                                                compute_polytopes = True,
-                                                use_virtual_gates = False)   
+    sensor_config = {
+        "sensor_dot_indices": [-1],  #Indices of the sensor dots
+        "sensor_detunings": [-0.02],  #Detuning of the sensor dots
+        "noise_amplitude": {"fast_noise": 0.8*1e-90, "slow_noise": 2*1e-90}, #Noise amplitude for the sensor dots in eV
+        "peak_width_multiplier": 25,  #Width of the sensor peaks in the units of thermal broadening m *kB*T/0.61.
+    }
+
+
+    return capacitance_config, tunneling_config, sensor_config
+
+def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.ndarray=None):
+    """
+    Run the QDarts experiment for a given number of dots K and
+    ranges of voltages to create needed data for CSD creation.
+    """
+    C_DD, C_DG = generate_capacitance_matrices(device)
     
-    return C_DD, C_DG, ks, cuts, xks, yks, csd_dataks, polytopesks
+    try:
+        cut = get_cut()
+    except ValueError as e:
+        print(f"Error generating cut: {e}")
+        return None
+        
+    use_sensor_signal = True if c.NOISE else False
+    
+    try:
+        if not c.NOISE:
+            capacitance_config, _, _ = generate_experiment_config(C_DD, C_DG)
+            experiment = Experiment(capacitance_config)
+        else:
+            capacitance_config, tunneling_config, sensor_config = generate_experiment_config(C_DD, C_DG)
+            experiment = Experiment(capacitance_config, tunneling_config, sensor_config)
+
+        print(cut)
+
+        xks, yks, csd_dataks, polytopesks, sensor, _ = experiment.generate_CSD(
+            x_voltages=x_vol,  # V
+            y_voltages=y_vol,  # V
+            plane_axes=cut,
+            target_state=[1, 0, 5],  # target state for transition
+            target_transition=[-1, 1, 0],  # target transition from target state
+            compute_polytopes=True,
+            use_sensor_signal=use_sensor_signal
+        )
+        
+        return C_DD, C_DG, ks, cut, xks, yks, csd_dataks, polytopesks, sensor[:,:,0], device
+        
+    except Exception as e:
+        print(f"Error in experiment generation: {e}")
+        return None
 
 def count_directories_in_folder():
     """
@@ -448,7 +507,7 @@ def reconstruct_img_with_matrices(batch_num:int, img_name:str, show:bool = False
         
         return img, C_DD, C_DG
     
-def save_datapoints(K, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot):
+def save_datapoints(K, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot, csd_gradient, device):
     """
        Combine all 'saveing' function to create a datapoint containg an PNG image, 
        a new json instantce in the 'batch' datapoints.json file, as well as a new hfd5 
@@ -461,7 +520,7 @@ def save_datapoints(K, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot):
     # save datapoints
     csd = Image.open(fpi)
     csd_tensor = torch.tensor(np.array(csd)).permute(2, 0, 1)
-    
+    csd_gradient_tensor = torch.tensor(np.array(csd_gradient)).permute(2, 0, 1)
     ks = np.nan if ks is None else ks
     datapoints_dict = {img_name: {
         'K': K, 
@@ -471,14 +530,16 @@ def save_datapoints(K, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot):
         'x_vol': np.array(x_vol), 
         'y_vol': np.array(y_vol), 
         'cuts': np.array(cuts), 
-        'csd': csd_tensor
-    }} # 8 elements
+        'csd': csd_tensor,
+        'csd_gradient': csd_gradient_tensor,
+        'device': device
+    }} # 10 elements
     
     save_to_hfd5(datapoints_dict)
 
 
 def generate_datapoint(args):
-    K, x_vol, y_vol, ks, i, N = args
+    x_vol, y_vol, ks, device, i, N = args
     print(f"Generating datapoint {i+1}/{N}:")
     try:
         # Create a unique seed for this process
@@ -490,9 +551,14 @@ def generate_datapoint(args):
         np.random.seed(unique_seed)
         random.seed(unique_seed)
         
-        C_DD, C_DG, ks, cuts, x, y, csd, poly = generate_dataset(K, x_vol, y_vol, ks)
-        fig, _ = plot_CSD(x, y, csd, poly)
-        return (C_DD, C_DG, ks, cuts, x_vol, y_vol, fig)
+        C_DD, C_DG, ks, cut, x, y, csd, poly, sensor, device = generate_dataset(x_vol, y_vol, ks, device)
+        if not c.NOISE:
+            fig, _ = plot_CSD(x, y, csd, poly)
+            return (C_DD, C_DG, ks, cut, x_vol, y_vol, fig, np.gradient(csd, axis=1), device)
+        else:
+            fig, _ = plot_CSD(x, y, sensor, poly)
+            return (C_DD, C_DG, ks, cut, x_vol, y_vol, fig, np.gradient(sensor, axis=1), device)
+        
     except Exception as e:
         print(f"Execution failed for datapoint {i+1}!")
         print(f"Error: {e}")
