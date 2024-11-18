@@ -19,13 +19,13 @@ sys.path.append('./qdarts')
 from qdarts.experiment import Experiment
 from qdarts.plotting import plot_polytopes
 
-import utilities.config as c    
-PATH = c.PATH
+import importlib
+import utilities.config as c
 
 DPI = c.DPI
 RESOLUTION = c.RESOLUTION
 K = c.K
-
+PATH = c.get_path()
 
 def transform_to_cartesian(r:float, theta:float) -> tuple[float, float]:
     """
@@ -228,19 +228,18 @@ def generate_dummy_data(K:int) -> tuple[np.ndarray, np.ndarray]:
     return np.identity(K), np.identity(K)
 
 def get_cut():
-    """
-        Generate a 2d cut constructed from standard basis vectors.
-    """
-    #TODO: Extend to more complex cuts
-    cut = np.zeros((2,c.get_global_K()))
-    print(c.get_global_K(), c.get_global_N())
+    """Generate a 2d cut constructed from standard basis vectors."""
+    importlib.reload(c)  # Reload config module
+    c.validate_state()
     
-    indices = np.random.choice(np.arange(c.get_global_N()), 2, replace=False)
+    print(f"\nConfiguration in get_cut():")
+    print(f"K={c.K}, N={c.N}, S={c.S}")
+    
+    cut = np.zeros((2, c.K))
+    indices = np.random.choice(np.arange(c.N), 2, replace=False)
     cut[tuple(zip(*enumerate(indices)))] = 1
-    cut = cut[np.argmax(cut, axis=1).argsort()] 
-    
-    return cut
-    
+    return cut[np.argmax(cut, axis=1).argsort()]
+
 def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesks: list[np.ndarray], res:int=RESOLUTION, dpi:int=DPI):
     """
         Plot the charge stability diagram (CSD) (res by res, default 256 by 256).
@@ -286,10 +285,16 @@ def generate_experiment_config(C_DD:np.ndarray, C_DG:np.ndarray):
     return capacitance_config, tunneling_config, sensor_config
 
 def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.ndarray=None):
-    """
-    Run the QDarts experiment for a given number of dots K and
-    ranges of voltages to create needed data for CSD creation.
-    """
+    """Run the QDarts experiment."""
+    importlib.reload(c)  # Reload config module
+    c.validate_state()
+    
+    print(f"\nConfiguration in generate_dataset():")
+    print(f"K={c.K}, N={c.N}, S={c.S}")
+    
+    if c.NOISE and device is None:
+        raise ValueError("Device must be provided when noise is enabled")
+    
     C_DD, C_DG = generate_capacitance_matrices(device)
     
     try:
@@ -344,7 +349,7 @@ def create_paths(K:int, path:str=PATH):
  
     batch_name = 'batch-' + str(count_directories_in_folder()+1)
     
-    full_path = os.path.join(PATH, batch_name)
+    full_path = os.path.join(path, batch_name)
     
     if not os.path.exists(full_path):
         os.makedirs(full_path)

@@ -2,6 +2,7 @@ import argparse
 import sys, time
 import numpy as np
 import multiprocessing as mp
+import importlib
 
 import utilities.config as c
 import utilities.utils as u
@@ -37,23 +38,30 @@ def main():
     N = args.N
     R = args.R
     K = args.K
-    c.set_global_K(K)
+    # c.set_global_K(K)
+    c.K = K
 
     Noise = args.Noise
-    c.set_global_NOISE(Noise)
+    # c.set_global_NOISE(Noise)
+    c.Noise = Noise
 
-    if Noise and (args.device is None or args.S is None):
-        raise ValueError("The device and the number of sensors must be provided when noise is not used.")
+    # Update configuration and reload
+    c.set_global_K(args.K)
+    c.set_global_NOISE(args.Noise)
+    importlib.reload(c)
+    
+    if c.NOISE and (args.device is None or args.S is None):
+        raise ValueError("The device and the number of sensors must be provided when noise is used.")
     else:
         device = np.array(args.device)
-        S = args.S 
-        c.set_global_S(S)
-        
+        c.set_global_S(args.S)
         N_dots = len(u.get_dots_indices(device))
         c.set_global_N(N_dots)
-        c.set_global_K(N_dots + S)
-            
-    assert c.K == c.N + c.S, "The number of dots and sensors must add up to the total number of dots."
+        importlib.reload(c)  # Reload after setting values
+        
+        print(f"\nConfiguration state:")
+    print(f"K={c.K}, N={c.N}, S={c.S}, NOISE={c.NOISE}")
+    c.validate_state()
     
     for r in range(R):
         print(f"Batch number: {r+1}/{R}.")
