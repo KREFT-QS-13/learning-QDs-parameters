@@ -24,7 +24,7 @@ def main():
     parser.add_argument('--R', type=np.int32, default=1, 
                         help='The number of batches to to generate. Default vaule 1.')
     
-    parser.add_argument('--K', type=np.int32, default=c.K, 
+    parser.add_argument('--K', type=np.int32, default=2, 
                         help='The number of quantum dots in the system. Default vaule 2.')
 
     parser.add_argument('--Noise', type=bool, default=False, help='If True, the dataset will be generated with noise.')
@@ -35,56 +35,48 @@ def main():
 
 
     args = parser.parse_args()
-    N = args.N
+    N_batch = args.N
     R = args.R
     K = args.K
-    # c.set_global_K(K)
-    c.K = K
-
     Noise = args.Noise
-    # c.set_global_NOISE(Noise)
-    c.Noise = Noise
-
-    # Update configuration and reload
-    c.set_global_K(args.K)
-    c.set_global_NOISE(args.Noise)
-    importlib.reload(c)
+    c.NOISE = Noise
     
     if c.NOISE and (args.device is None or args.S is None):
         raise ValueError("The device and the number of sensors must be provided when noise is used.")
     else:
         device = np.array(args.device)
-        c.set_global_S(args.S)
+        S = args.S
         N_dots = len(u.get_dots_indices(device))
-        c.set_global_N(N_dots)
-        importlib.reload(c)  # Reload after setting values
+        K = N_dots + S
         
-        print(f"\nConfiguration state:")
-    print(f"K={c.K}, N={c.N}, S={c.S}, NOISE={c.NOISE}")
-    c.validate_state()
+    config_tuple = (K, N_dots, S)
+    c.validate_state(*config_tuple)
     
     for r in range(R):
         print(f"Batch number: {r+1}/{R}.")
         main_start = time.time()
-        u.create_paths(K)
+        u.create_paths(config_tuple)
+        
         # Prepare arguments for multiprocessing
-        pool_args = [(x_vol, y_vol, ks, device, i, N) for i in range(N)]
+        pool_args = [(x_vol, y_vol, ks, device, i, N_batch, config_tuple) for i in range(N_batch)]
         
         # Create a multiprocessing pool
         with mp.Pool(processes=mp.cpu_count()) as pool:
             results = pool.map(u.generate_datapoint, pool_args)
-
+        
         suc = 0
         for i, result in enumerate(results):
             if result is not None:
                 suc += 1
-                C_DD, C_DG, ks, cuts, x_vol, y_vol, fig, fig_gradient = result
-                u.save_datapoints(K, C_DD, C_DG, ks, x_vol_range, y_vol_range, cuts, fig, fig_gradient, device)
-                print(f"Successfully generated datapoints: {suc}/{N} ({i+1}/{N}).\n\n")
+            
+                C_DD, C_DG, ks, cut, x_vol, y_vol, fig, fig_gradient, device = result
+                u.save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol_range, 
+                                  y_vol_range, cut, fig, fig_gradient, device)
+                print(f"Successfully generated datapoints: {suc}/{N_batch} ({i+1}/{N_batch}).\n\n")
 
         final_time = round(np.abs(main_start-time.time()),3)
-        print(f"\nTotal time: {final_time}[s] -> {(final_time/N):.3f}[s] per datapoint.")    
-        print(f"Successfully generated datapoints: {suc}/{N}.\n\n")
+        print(f"\nTotal time: {final_time}[s] -> {(final_time/N_batch):.3f}[s] per datapoint.")    
+        print(f"Successfully generated datapoints: {suc}/{N_batch}.\n\n")
         
         if R>1:
             print("Rest for 1 mintues, to decreser the tmep. of the CPU.")

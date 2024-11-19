@@ -84,6 +84,7 @@ class NoisySensorDot(BaseSensorSim):
             
             #get probability of each state of the array
             p = np.diag(mixed_state)[terms]
+            # print(f"This is p: {p}, terms: {terms}, mixed state: {mixed_state}")
             #compute sensor detuning between every state and their neighbour
             eps_prev = np.abs(np.diag(H)[terms]-np.diag(H)[neighbour_prev])
             eps_next = np.abs(np.diag(H)[terms]-np.diag(H)[neighbour_next])
@@ -215,6 +216,8 @@ class ApproximateTunnelingSimulator:
         H_sel = H[:,sel][sel,:]
         
         eigs, U = np.linalg.eigh(H_sel)
+        eigs -= eigs[0]
+        # print(eigs)
         ps = softmax(-eigs * self.beta)
         rho_sel = U @ np.diag(ps) @ U.T
         

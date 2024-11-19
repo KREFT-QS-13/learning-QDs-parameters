@@ -19,13 +19,11 @@ sys.path.append('./qdarts')
 from qdarts.experiment import Experiment
 from qdarts.plotting import plot_polytopes
 
-import importlib
+import traceback
 import utilities.config as c
 
 DPI = c.DPI
 RESOLUTION = c.RESOLUTION
-K = c.K
-PATH = c.get_path()
 
 def transform_to_cartesian(r:float, theta:float) -> tuple[float, float]:
     """
@@ -124,11 +122,12 @@ def get_dist_dot_sensor(r0:float, theta0:float, nx:int, ny:int) -> tuple[float, 
     
     return np.sqrt( r0**2 + r_0i**2 - 2*r0*r_0i*np.cos(theta_si))
 
-def get_device_distance_matrix(device:np.ndarray, sensors:list[tuple[float, float]]) -> np.ndarray:
+def get_device_distance_matrix(device:np.ndarray, sensors:list[tuple[float, float]], config_tuple:tuple[int, int, int]) -> np.ndarray:
     """
         Get the distance matrix for the device.
     """
-    dist_matrix = np.zeros((c.K,c.K))
+    K, N, S = config_tuple
+    dist_matrix = np.zeros((K,K))
     sensor_corr = [transform_to_cartesian(r,t) for r,t in sensors]
     sensor_corr = [(x/c.d_DD, y/c.d_DD)  for x,y in sensor_corr]
     
@@ -141,37 +140,32 @@ def get_device_distance_matrix(device:np.ndarray, sensors:list[tuple[float, floa
     
     return dist_matrix
 
-def exp_decay_model(dist_matrix:np.ndarray, mean:float=1.0, std:float=0.15, model:int=0) -> np.ndarray:
+def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], mag_list, mean:float=1.0, std:float=0.15) -> np.ndarray:
     """
         Exponential decay model for the capacitance matrix.
     """
-    assert c.p_dd < 1, "The decrese at  of dot-dot interaction must be less than 1!"
+    K, N, S = config_tuple
     
-    if model == 0:
-        decay = lambda x,p: np.exp(x*np.log(p))
-    elif model == 1:
-        decay = lambda x,p: p**x
-    else:
-        raise ValueError("Invalid model number!")
+    decay = lambda x,p: p**x
     
-    list = [5,6.5,7,7.5,8,8.5,9,9.5,10,11,12,15,16,20]
-    mag_conts = np.random.choice(list, size=c.K)
+    # list = [5,6.5,7,7.5,8,8.5,9,9.5,10]
+    mag_conts = np.random.choice(mag_list, size=K)
     
-    C_dd_prime, C_dg = np.identity(c.K), np.identity(c.K)
+    C_dd_prime, C_dg = np.identity(K), np.identity(K)
     C_dd_prime[np.eye(C_dd_prime.shape[0], dtype=bool)] = [round(np.random.normal(c*mean, c*std), 4) for c in mag_conts]
     C_dg[np.eye(C_dg.shape[0], dtype=bool)] = [round(np.random.normal(c*mean, c*std), 4) for c in mag_conts]
 
 
-    for i in range(c.K):
-        for j in range(i+1, c.K):
-            C_dd_prime[i,j] = C_dd_prime[j,i] = round(np.sqrt(C_dd_prime[i,i]*C_dd_prime[j,j])*decay(dist_matrix[i,j]/c.d_DD, c.p_dd), 4)
-            C_dg[i,j] = C_dg[j,i] = round(np.sqrt(C_dd_prime[i,i]*C_dd_prime[j,j])*decay(dist_matrix[i,j]/c.d_DD, c.p_dg), 4)
+    for i in range(K):
+        for j in range(i+1, K):
+            C_dd_prime[i,j] = C_dd_prime[j,i] = round(np.sqrt(C_dd_prime[i,i]*C_dd_prime[j,j]) * decay(dist_matrix[i,j]/c.d_DD, c.p_dd), 4)
+            C_dg[i,j] = C_dg[j,i] = round(np.sqrt(C_dd_prime[i,i]*C_dd_prime[j,j])*decay(dist_matrix[i,j]/c.d_DG, c.p_dg), 4)
 
 
     return C_dd_prime, C_dg
 
 
-def generate_capacitance_matrices(device:np.ndarray=None) -> tuple[np.ndarray, np.ndarray]:
+def generate_capacitance_matrices(device:np.ndarray=None, config_tuple:tuple[int, int, int]=None) -> tuple[np.ndarray, np.ndarray]:
     """
         Generate random capacitance matrices for a given number of dots K from a normal distribution.
         
@@ -183,39 +177,37 @@ def generate_capacitance_matrices(device:np.ndarray=None) -> tuple[np.ndarray, n
     """
     if c.NOISE and device is None:
         raise ValueError("Device is not provided! For noise generation you need to provide the device!")
-
+    K, N, S = config_tuple
     mean = 1.0 #aF
-    std = 0.15
-    C_DG = np.random.normal(mean, std, (c.K,c.K))
+    std = 0.1
+    C_DG = np.random.normal(mean, std, (K,K))
     
-    list = [5,6.5,7,7.5,8,8.5,9,9.5,10,11,12,15,16,20]
+    mag_list = [5,6.5,7,7.5,8,8]
     # list = [5,6.5,7,7.5,8,8.5,9]
 
     if not c.NOISE:
-        for i in range(c.K):
+        for i in range(K):
             diag_const = np.random.choice(list)
 
             C_DG[i,i] = np.random.normal(diag_const*mean, diag_const*std)
         
-            C_m = np.zeros((c.K, c.K)) 
+            C_m = np.zeros((K, K)) 
             mask = ~np.eye(C_m.shape[0], dtype=bool)
-            C_m[mask] = np.random.normal(mean, std, c.K*(c.K-1))
+            C_m[mask] = np.random.normal(mean, std, K*(K-1))
 
             C_m = (C_m + C_m.T)/2
 
-        C_DD = np.sum(C_DG, axis=1).T*np.eye(c.K) + C_m
+        C_DD = np.sum(C_DG, axis=1).T*np.eye(K) + C_m
         return C_DD, C_DG
     elif device is not None:
-        N = len(get_dots_indices(device)) # Number of dots
-        S = c.S # Number of sensors
         sensors = set_sensors_positions(S, device)
-        dist_matrix = get_device_distance_matrix(device, sensors)
+        dist_matrix = get_device_distance_matrix(device, sensors, config_tuple)
 
-        C_DD, C_DG = exp_decay_model(dist_matrix, mean, std, model=0)
+        C_DD, C_DG = exp_decay_model(dist_matrix, config_tuple, mag_list, mean, std)
         
-        # C_DD = np.sum(C_DG, axis=1).T*np.eye(c.K) + (np.sum(C_DD, axis=1)-np.diag(C_DD))*np.eye(c.K) + np.diag(C_DD)*np.eye(c.K) # Sum of the rows of C_DG  + C_m + self-capacitance
+        # C_DD = np.sum(C_DG, axis=1).T*np.eye(K) + (np.sum(C_DD, axis=1)-np.diag(C_DD))*np.eye(K) + np.diag(C_DD)*np.eye(K) # Sum of the rows of C_DG  + C_m + self-capacitance
         # Cm = np.sum(x[:-S,:-S], axis=1) ??
-        C_DD = C_DD + np.sum(C_DG, axis=1).T*np.eye(c.K) + (np.sum(C_DD, axis=1)-np.diag(C_DD))*np.eye(c.K) 
+        C_DD = C_DD + np.sum(C_DG, axis=1).T*np.eye(K) + (np.sum(C_DD, axis=1)-np.diag(C_DD))*np.eye(K) 
 
         return C_DD, C_DG
     else:
@@ -227,16 +219,13 @@ def generate_dummy_data(K:int) -> tuple[np.ndarray, np.ndarray]:
     """
     return np.identity(K), np.identity(K)
 
-def get_cut():
+def get_cut(config_tuple):
     """Generate a 2d cut constructed from standard basis vectors."""
-    importlib.reload(c)  # Reload config module
-    c.validate_state()
-    
-    print(f"\nConfiguration in get_cut():")
-    print(f"K={c.K}, N={c.N}, S={c.S}")
-    
-    cut = np.zeros((2, c.K))
-    indices = np.random.choice(np.arange(c.N), 2, replace=False)
+    K, N, S = config_tuple
+    c.validate_state(K, N, S)
+        
+    cut = np.zeros((2, K))
+    indices = np.random.choice(np.arange(N), 2, replace=False)
     cut[tuple(zip(*enumerate(indices)))] = 1
     return cut[np.argmax(cut, axis=1).argsort()]
 
@@ -257,10 +246,45 @@ def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesk
 
     return plt.gcf(), ax
 
-def generate_experiment_config(C_DD:np.ndarray, C_DG:np.ndarray):
-    tunnel_couplings = np.zeros((c.K,c.K))
-    mask = ~np.eye(tunnel_couplings.shape[0], dtype=bool)
-    tunnel_couplings[mask] = 100*1e-6
+def get_mask(device: np.ndarray, config_tuple: tuple[int, int, int]) -> np.ndarray:
+    """
+    Create a mask for nearest neighbors (horizontal and vertical only) in the device.
+    
+    Args:
+        device (np.ndarray): Binary array where 1s represent dots
+        config_tuple (tuple[int, int, int]): Tuple of (K, N, S) values
+    
+    Returns:
+        np.ndarray: Boolean array of shape (K, K) where True indicates nearest neighbors
+    """
+    K, N, S = config_tuple
+    mask = np.zeros((K, K), dtype=bool)
+    
+    # Get dot indices
+    dot_indices = get_dots_indices(device)
+    
+    # Check each pair of dots
+    for i, (row1, col1) in enumerate(dot_indices):
+        for j, (row2, col2) in enumerate(dot_indices):
+            if i != j:  # Don't compare dot with itself
+                # Check if dots are adjacent horizontally or vertically
+                is_neighbor = (
+                    (abs(row1 - row2) == 1 and col1 == col2) or  # Vertical neighbor
+                    (abs(col1 - col2) == 1 and row1 == row2)     # Horizontal neighbor
+                )
+                if is_neighbor:
+                    mask[i, j] = True
+                    mask[j, i] = True  # Make it symmetric
+    
+    return mask
+
+
+def generate_experiment_config(C_DD:np.ndarray, C_DG:np.ndarray, config_tuple:tuple[int, int, int], device:np.ndarray):
+    K, N, S = config_tuple
+    tunnel_couplings = np.zeros((K,K))
+    #TODO: Create a new mask that for each dot set c.tunnel_coupling_const to its nearest neighbors
+    mask = get_mask(device, config_tuple)
+    tunnel_couplings[mask] = c.tunnel_coupling_const 
 
     capacitance_config = {
         "C_DD" : C_DD,  #dot-dot capacitance matrix
@@ -277,88 +301,126 @@ def generate_experiment_config(C_DD:np.ndarray, C_DG:np.ndarray):
     sensor_config = {
         "sensor_dot_indices": [-1],  #Indices of the sensor dots
         "sensor_detunings": [-0.02],  #Detuning of the sensor dots
-        "noise_amplitude": {"fast_noise": 0.8*1e-90, "slow_noise": 2*1e-90}, #Noise amplitude for the sensor dots in eV
+        "noise_amplitude": {"fast_noise":c.fast_noise_amplitude, "slow_noise": c.slow_noise_amplitude}, #Noise amplitude for the sensor dots in eV
         "peak_width_multiplier": 25,  #Width of the sensor peaks in the units of thermal broadening m *kB*T/0.61.
     }
 
 
     return capacitance_config, tunneling_config, sensor_config
 
-def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.ndarray=None):
-    """Run the QDarts experiment."""
-    importlib.reload(c)  # Reload config module
-    c.validate_state()
-    
-    print(f"\nConfiguration in generate_dataset():")
-    print(f"K={c.K}, N={c.N}, S={c.S}")
+def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.ndarray=None, config_tuple:tuple[int,int,int]=None):
+    """
+        Run the QDarts experiment.
+    """
+    if config_tuple is None:
+        raise ValueError("config_tuple must be provided")
+        
+    K, N, S = config_tuple
+    c.validate_state(K, N, S)
     
     if c.NOISE and device is None:
         raise ValueError("Device must be provided when noise is enabled")
-    
-    C_DD, C_DG = generate_capacitance_matrices(device)
-    
+        
     try:
-        cut = get_cut()
-    except ValueError as e:
-        print(f"Error generating cut: {e}")
-        return None
+        C_DD, C_DG = generate_capacitance_matrices(device, config_tuple)
         
-    use_sensor_signal = True if c.NOISE else False
-    
-    try:
-        if not c.NOISE:
-            capacitance_config, _, _ = generate_experiment_config(C_DD, C_DG)
-            experiment = Experiment(capacitance_config)
-        else:
-            capacitance_config, tunneling_config, sensor_config = generate_experiment_config(C_DD, C_DG)
-            experiment = Experiment(capacitance_config, tunneling_config, sensor_config)
+        try:
+            cut = get_cut(config_tuple)
+        except ValueError as e:
+            print(f"Error generating cut: {e}")
+            return None
+            
+        use_sensor_signal = True if c.NOISE else False
+        print(c.NOISE)
+        try:
+            if not c.NOISE:
+                capacitance_config, _, _ = generate_experiment_config(C_DD, C_DG, config_tuple, device)
+                experiment = Experiment(capacitance_config)
+            else:
+                capacitance_config, tunneling_config, sensor_config = generate_experiment_config(C_DD, C_DG, config_tuple, device)
+                experiment = Experiment(capacitance_config, tunneling_config, sensor_config)
 
-        print(cut)
+           
+            result = experiment.generate_CSD(
+                x_voltages=x_vol,  # V
+                y_voltages=y_vol,  # V
 
-        xks, yks, csd_dataks, polytopesks, sensor, _ = experiment.generate_CSD(
-            x_voltages=x_vol,  # V
-            y_voltages=y_vol,  # V
-            plane_axes=cut,
-            target_state=[1, 0, 5],  # target state for transition
-            target_transition=[-1, 1, 0],  # target transition from target state
-            compute_polytopes=True,
-            use_sensor_signal=use_sensor_signal
-        )
-        
-        return C_DD, C_DG, ks, cut, xks, yks, csd_dataks, polytopesks, sensor[:,:,0], device
-        
+                target_state = [1,0,5],  # target state for transition
+                target_transition = [-1,1,0], #target transition from target state, here transition to [2,3,2,3,5,5]
+
+                plane_axes=cut,
+                compute_polytopes=True,
+                use_sensor_signal=use_sensor_signal
+            )
+            
+            if result is None:
+                print("generate_CSD returned None")
+                return None
+                
+            xks, yks, csd_dataks, polytopesks, sensor, _ = result
+            
+            if c.NOISE:
+                return C_DD, C_DG, ks, cut, xks, yks, csd_dataks, polytopesks, sensor[:,:,0], device
+            else:
+                return C_DD, C_DG, ks, cut, xks, yks, csd_dataks, polytopesks, None, device
+            
+        except Exception as e:
+            print(f"Error in experiment generation: {e}")
+            print(f"Traceback: {traceback.format_exc()}")
+            return None
+            
     except Exception as e:
-        print(f"Error in experiment generation: {e}")
+        print(f"Error in capacitance matrix generation: {e}")
+        print(f"Traceback: {traceback.format_exc()}")
         return None
 
-def count_directories_in_folder():
+def ensure_path(path):
     """
-        Count the number of batch directories in a given folder.
+    Ensure that the directory path exists, create it if it doesn't.
+    
+    Args:
+        path (str): Path to ensure exists
     """
-    batch_list = [x for x in os.listdir(PATH) if re.compile(r"batch-\d").match(x)] 
+    if not os.path.exists(path):
+        os.makedirs(path)
+        print(f"Created directory: {path}")
+    return path
 
-    return sum(os.path.isdir(os.path.join(PATH, x)) for x in batch_list)
+def count_directories_in_folder(config_tuple):
+    """Count the number of batch directories in a given folder."""
+    K, N, S = config_tuple
+    path = c.get_path(K, N, S)
+    
+    # Ensure the path exists before trying to list directories
+    ensure_path(path)
+    
+    # Now safely list directories
+    batch_list = [x for x in os.listdir(path) if re.compile(r"batch-\d").match(x)] 
+    return sum(os.path.isdir(os.path.join(path, x)) for x in batch_list)
 
-
-def create_paths(K:int, path:str=PATH):
-    """
-        Creates paths for datapoints and images where the data will be saved.
-    """
+def create_paths(config_tuple, path=None):
+    """Creates paths for datapoints and images."""
+    K, N, S = config_tuple
+    if path is None:
+        path = c.get_path(K, N, S)
+        
     global PATH_IMG
     global PATH_DPS
  
-    batch_name = 'batch-' + str(count_directories_in_folder()+1)
+    # Ensure base path exists
+    ensure_path(path)
     
+    batch_name = 'batch-' + str(count_directories_in_folder(config_tuple)+1)
     full_path = os.path.join(path, batch_name)
     
-    if not os.path.exists(full_path):
-        os.makedirs(full_path)
+    # Create batch directory
+    ensure_path(full_path)
     
     full_path_dps = full_path
-    
     full_path_img = os.path.join(full_path, 'imgs')
-    if not os.path.exists(full_path_img):
-        os.makedirs(full_path_img)
+    
+    # Create images directory
+    ensure_path(full_path_img)
 
     PATH_IMG = full_path_img
     PATH_DPS = full_path_dps
@@ -379,12 +441,12 @@ def clean_batch():
             print("Unable to clean empty batch folder!")
             print(f'{e}')
 
-def save_img_csd(K, csd_plot):
+def save_img_csd(config_tuple, csd_plot):
     """
-        Save the CSD image as a PNG file with a 'unique' name.
+    Save the CSD image as a PNG file with a 'unique' name.
     """
+    K, N, S = config_tuple
     img_name = ''.join([str(random.randint(0, 9)) for _ in range(10)])+'.png'
-
     full_path_img = os.path.join(PATH_IMG, img_name)
     
     csd_plot.savefig(full_path_img, 
@@ -394,7 +456,6 @@ def save_img_csd(K, csd_plot):
                      dpi=DPI)
     
     plt.close(csd_plot)
-    
     return full_path_img, img_name
 
 # TODO: Figure out how to save the data in multiple files after 500 datapoints generation
@@ -449,21 +510,26 @@ def save_to_hfd5(dictionary: dict):
                 else:
                     print(f"Unsupported type for {sub_key}: {type(sub_value)}")
 
-def get_batch_folder_name(batch_num:int):
-    if batch_num <= count_directories_in_folder():
+def get_batch_folder_name(batch_num: int, config_tuple: tuple[int, int, int]):
+    """
+        Get the batch folder name.
+    """
+    K, N, S = config_tuple
+    if batch_num <= count_directories_in_folder(config_tuple):
         return 'batch-' + str(batch_num)
     else:
-        print(ValueError(f"Batch number is too high! Max: {count_directories_in_folder()}!"))
+        print(ValueError(f"Batch number is too high! Max: {count_directories_in_folder(config_tuple)}!"))
         return None
 
-def get_path_hfd5(batch_num:int, v:bool=False):
+def get_path_hfd5(batch_num: int, config_tuple: tuple[int, int, int], v: bool=False):
     """
-        Load the datapoints from a hfd5 file.
-        For know it is for testing and not yet finished.
+        Get the path to the hfd5 file.
+        For now it is for testing and not yet finished.
     """
-    batch_name = get_batch_folder_name(batch_num)
-
-    full_path_dps = os.path.join(PATH, batch_name, 'datapoints.h5')
+    K, N, S = config_tuple
+    batch_name = get_batch_folder_name(batch_num, config_tuple)
+    path = c.get_path(K, N, S)
+    full_path_dps = os.path.join(path, batch_name, 'datapoints.h5')
           
     return full_path_dps
 
@@ -473,12 +539,14 @@ def check_and_correct_img_name(img_name: str):
     else:
         return img_name
 
-def load_csd_img(batch_num:int, csd_name: str, show:bool=False):
+def load_csd_img(batch_num: int, csd_name: str, config_tuple: tuple[int, int, int], show: bool=False):
     """
         Load the PNG file 
     """
-    csd_name =  check_and_correct_img_name(csd_name)
-    path = os.path.join(PATH, get_batch_folder_name(batch_num), 'imgs', csd_name)
+    K, N, S = config_tuple
+    csd_name = check_and_correct_img_name(csd_name)
+    path = c.get_path(K, N, S)
+    path = os.path.join(path, get_batch_folder_name(batch_num, config_tuple), 'imgs', csd_name)
     
     img = Image.open(path)
     if show:
@@ -489,9 +557,12 @@ def load_csd_img(batch_num:int, csd_name: str, show:bool=False):
 def reconstruct_img_from_tensor(tensor:np.ndarray):
     return Image.fromarray((tensor.transpose(1, 2, 0)))
 
-def reconstruct_img_with_matrices(batch_num:int, img_name:str, show:bool = False):
+def reconstruct_img_with_matrices(batch_num: int, img_name: str, config_tuple: tuple[int, int, int], show: bool=False):
+    """
+    Reconstruct image and get associated matrices from HDF5 file.
+    """
     img_name = check_and_correct_img_name(img_name)
-    path = get_path_hfd5(batch_num)
+    path = get_path_hfd5(batch_num, config_tuple)
 
     with h5py.File(path, 'r') as f:
         img = f[img_name]['csd'][:]
@@ -512,23 +583,41 @@ def reconstruct_img_with_matrices(batch_num:int, img_name:str, show:bool = False
         
         return img, C_DD, C_DG
     
-def save_datapoints(K, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot, csd_gradient, device):
+def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot, csd_gradient, device):
     """
-       Combine all 'saveing' function to create a datapoint containg an PNG image, 
-       a new json instantce in the 'batch' datapoints.json file, as well as a new hfd5 
-       instantce in the 'batch' datapoints.h5 file.
+    Combine all 'saving' functions to create a datapoint.
     """
+    K, N, S = config_tuple
    
     # save img of CSD 
-    fpi, img_name = save_img_csd(K, csd_plot)
+    fpi, img_name = save_img_csd(config_tuple, csd_plot)
    
     # save datapoints
     csd = Image.open(fpi)
-    csd_tensor = torch.tensor(np.array(csd)).permute(2, 0, 1)
-    csd_gradient_tensor = torch.tensor(np.array(csd_gradient)).permute(2, 0, 1)
+    csd_array = np.array(csd)
+    
+    # Handle grayscale images (2D) vs RGB images (3D)
+    if len(csd_array.shape) == 2:
+        # If grayscale, add channel dimension
+        csd_tensor = torch.tensor(csd_array[None, :, :])
+    else:
+        # If RGB/RGBA, permute dimensions to [C, H, W]
+        csd_tensor = torch.tensor(csd_array).permute(2, 0, 1)
+
+    # Handle gradient data similarly
+    if len(csd_gradient.shape) == 2:
+        csd_gradient_tensor = torch.tensor(csd_gradient[None, :, :])
+    else:
+        csd_gradient_tensor = torch.tensor(csd_gradient).permute(2, 0, 1)
+
     ks = np.nan if ks is None else ks
     datapoints_dict = {img_name: {
         'K': K, 
+        'N': N,
+        'S': S,
+        'tunnel_coupling_const': c.tunnel_coupling_const,
+        'slow_noise_amplitude': c.slow_noise_amplitude,
+        'fast_noise_amplitude': c.fast_noise_amplitude,
         'C_DD': C_DD, 
         'C_DG': C_DG, 
         'ks': ks,
@@ -537,15 +626,26 @@ def save_datapoints(K, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot, csd_gradien
         'cuts': np.array(cuts), 
         'csd': csd_tensor,
         'csd_gradient': csd_gradient_tensor,
-        'device': device
-    }} # 10 elements
+        'device': device,
+        'p_dd': c.p_dd,
+        'p_dg': c.p_dg,
+        'd_DD': c.d_DD,
+        'd_DG': c.d_DG,
+        'r_min': c.r_min,
+        'r_max': c.r_max,
+        'noise': c.NOISE,
+    }} # 22 elements
     
     save_to_hfd5(datapoints_dict)
 
 
 def generate_datapoint(args):
-    x_vol, y_vol, ks, device, i, N = args
-    print(f"Generating datapoint {i+1}/{N}:")
+    x_vol, y_vol, ks, device, i, N_batch, config_tuple = args
+    print(f"Generating datapoint {i+1}/{N_batch}:")
+    if config_tuple[2] > 0:
+        c.NOISE = True
+    print(f"The noise is {c.NOISE}.")
+
     try:
         # Create a unique seed for this process
         process_id = os.getpid()
@@ -556,14 +656,19 @@ def generate_datapoint(args):
         np.random.seed(unique_seed)
         random.seed(unique_seed)
         
-        C_DD, C_DG, ks, cut, x, y, csd, poly, sensor, device = generate_dataset(x_vol, y_vol, ks, device)
+        result = generate_dataset(x_vol, y_vol, ks, device, config_tuple)
+        if result is None:
+            return None
+            
+        C_DD, C_DG, ks, cut, x, y, csd, poly, sensor, device = result
+        
         if not c.NOISE:
             fig, _ = plot_CSD(x, y, csd, poly)
-            return (C_DD, C_DG, ks, cut, x_vol, y_vol, fig, np.gradient(csd, axis=1), device)
+            return (C_DD, C_DG, ks, cut, x_vol, y_vol, fig, np.gradient(csd,axis=0)+np.gradient(csd,axis=1), device)
         else:
             fig, _ = plot_CSD(x, y, sensor, poly)
-            return (C_DD, C_DG, ks, cut, x_vol, y_vol, fig, np.gradient(sensor, axis=1), device)
-        
+            return (C_DD, C_DG, ks, cut, x_vol, y_vol, fig, np.gradient(csd,axis=0)+np.gradient(csd,axis=1), device)
+            
     except Exception as e:
         print(f"Execution failed for datapoint {i+1}!")
         print(f"Error: {e}")
@@ -637,5 +742,3 @@ def plot_device_lattice(device: np.ndarray, sensors: list[tuple[int, int]], figs
     
     plt.tight_layout()
     return fig, ax
-
-
