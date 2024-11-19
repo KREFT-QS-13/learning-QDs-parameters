@@ -5,19 +5,19 @@ PATH_0 = "./datasets/"
 # PATH_0 = "./ALICE/"
 
 DPI = 100
-RESOLUTION = 256 #96 256
+RESOLUTION = 96 #96 256
 
 d_DD = 100 # nm
 d_DG = 100 # nm
-p_dd = 0.5
-p_dg = 0.2
+p_dd = 0.65
+p_dg = 0.25
 
-tunnel_coupling_const = 500*1e-6
-slow_noise_amplitude = 1e-12 # 0.8*1e-90
-fast_noise_amplitude = 1e-12 # 2*1e-90  
+tunnel_coupling_const = 100*1e-8
+slow_noise_amplitude = 5*1e-5 # 0.8*1e-90
+fast_noise_amplitude = 5*1e-5 # 2*1e-90  
 
-r_min = 2.5 * d_DD
-r_max = 5 * d_DD
+r_min = 3 * d_DD
+r_max = 3.5 * d_DD
 
 NOISE = False
 

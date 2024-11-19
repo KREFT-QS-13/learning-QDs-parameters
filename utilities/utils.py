@@ -222,7 +222,6 @@ def generate_dummy_data(K:int) -> tuple[np.ndarray, np.ndarray]:
 def get_cut(config_tuple):
     """Generate a 2d cut constructed from standard basis vectors."""
     K, N, S = config_tuple
-    c.validate_state(K, N, S)
         
     cut = np.zeros((2, K))
     indices = np.random.choice(np.arange(N), 2, replace=False)
