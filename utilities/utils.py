@@ -175,19 +175,16 @@ def generate_capacitance_matrices(device:np.ndarray=None, config_tuple:tuple[int
         The off-diagonal elements of C_DD and C_DG are drawn from a normal distribution 
         with a mean and standard deviation of 10% of mean.
     """
-    if c.NOISE and device is None:
-        raise ValueError("Device is not provided! For noise generation you need to provide the device!")
     K, N, S = config_tuple
     mean = 1.0 #aF
     std = 0.1
     C_DG = np.random.normal(mean, std, (K,K))
     
     mag_list = [5,6.5,7,7.5,8,8]
-    # list = [5,6.5,7,7.5,8,8.5,9]
 
-    if not c.NOISE:
+    if S == 0:
         for i in range(K):
-            diag_const = np.random.choice(list)
+            diag_const = np.random.choice(mag_list)
 
             C_DG[i,i] = np.random.normal(diag_const*mean, diag_const*std)
         
@@ -199,14 +196,12 @@ def generate_capacitance_matrices(device:np.ndarray=None, config_tuple:tuple[int
 
         C_DD = np.sum(C_DG, axis=1).T*np.eye(K) + C_m
         return C_DD, C_DG
-    elif device is not None:
+    elif S>0 and device is not None:
         sensors = set_sensors_positions(S, device)
         dist_matrix = get_device_distance_matrix(device, sensors, config_tuple)
 
         C_DD, C_DG = exp_decay_model(dist_matrix, config_tuple, mag_list, mean, std)
         
-        # C_DD = np.sum(C_DG, axis=1).T*np.eye(K) + (np.sum(C_DD, axis=1)-np.diag(C_DD))*np.eye(K) + np.diag(C_DD)*np.eye(K) # Sum of the rows of C_DG  + C_m + self-capacitance
-        # Cm = np.sum(x[:-S,:-S], axis=1) ??
         C_DD = C_DD + np.sum(C_DG, axis=1).T*np.eye(K) + (np.sum(C_DD, axis=1)-np.diag(C_DD))*np.eye(K) 
 
         return C_DD, C_DG
@@ -228,7 +223,7 @@ def get_cut(config_tuple):
     cut[tuple(zip(*enumerate(indices)))] = 1
     return cut[np.argmax(cut, axis=1).argsort()]
 
-def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesks: list[np.ndarray], res:int=RESOLUTION, dpi:int=DPI):
+def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesks: list[np.ndarray], only_edges:bool=True, only_labels:bool=True, res:int=RESOLUTION, dpi:int=DPI):
     """
         Plot the charge stability diagram (CSD) (res by res, default 256 by 256).
     """
@@ -236,7 +231,7 @@ def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesk
     ax = plt.gca()
 
     ax.pcolormesh(1e3*x, 1e3*y, csd_or_sensor) #plot the background
-    plot_polytopes(ax, polytopesks, axes_rescale=1e3, only_edges=True, only_labels=True) #plot the polytopes
+    plot_polytopes(ax, polytopesks, axes_rescale=1e3, only_edges=only_edges, only_labels=only_labels) #plot the polytopes
 
     ax.set_xlim(x[0]*1e3, x[-1]*1e3)
     ax.set_ylim(y[0]*1e3, y[-1]*1e3)
@@ -317,8 +312,8 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
     K, N, S = config_tuple
     c.validate_state(K, N, S)
     
-    if c.NOISE and device is None:
-        raise ValueError("Device must be provided when noise is enabled")
+    if S > 0 and device is None:
+        raise ValueError("Device must be provided when using sensors (S > 0)")
         
     try:
         C_DD, C_DG = generate_capacitance_matrices(device, config_tuple)
@@ -329,28 +324,34 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
             print(f"Error generating cut: {e}")
             return None
             
-        use_sensor_signal = True if c.NOISE else False
-        print(c.NOISE)
+        use_sensor_signal = S > 0
+        
         try:
-            if not c.NOISE:
+            if S == 0:  # Replace NOISE check
                 capacitance_config, _, _ = generate_experiment_config(C_DD, C_DG, config_tuple, device)
                 experiment = Experiment(capacitance_config)
+
+                result = experiment.generate_CSD(
+                x_voltages=x_vol,  # V
+                y_voltages=y_vol,  # V
+                plane_axes=cut,
+                compute_polytopes=True
+            )
             else:
                 capacitance_config, tunneling_config, sensor_config = generate_experiment_config(C_DD, C_DG, config_tuple, device)
                 experiment = Experiment(capacitance_config, tunneling_config, sensor_config)
 
-           
-            result = experiment.generate_CSD(
-                x_voltages=x_vol,  # V
-                y_voltages=y_vol,  # V
+                result = experiment.generate_CSD(
+                    x_voltages=x_vol,  # V
+                    y_voltages=y_vol,  # V
 
-                target_state = [1,0,5],  # target state for transition
-                target_transition = [-1,1,0], #target transition from target state, here transition to [2,3,2,3,5,5]
+                    target_state = [1,0,5],  # target state for transition
+                    target_transition = [-1,1,0], #target transition from target state, here transition to [2,3,2,3,5,5]
 
-                plane_axes=cut,
-                compute_polytopes=True,
-                use_sensor_signal=use_sensor_signal
-            )
+                    plane_axes=cut,
+                    compute_polytopes=True,
+                    use_sensor_signal=use_sensor_signal
+                )
             
             if result is None:
                 print("generate_CSD returned None")
@@ -358,7 +359,7 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
                 
             xks, yks, csd_dataks, polytopesks, sensor, _ = result
             
-            if c.NOISE:
+            if S > 0: 
                 return C_DD, C_DG, ks, cut, xks, yks, csd_dataks, polytopesks, sensor[:,:,0], device
             else:
                 return C_DD, C_DG, ks, cut, xks, yks, csd_dataks, polytopesks, None, device
@@ -632,18 +633,16 @@ def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot, 
         'd_DG': c.d_DG,
         'r_min': c.r_min,
         'r_max': c.r_max,
-        'noise': c.NOISE,
-    }} # 22 elements
+    }} # 21 elements
     
     save_to_hfd5(datapoints_dict)
 
 
 def generate_datapoint(args):
     x_vol, y_vol, ks, device, i, N_batch, config_tuple = args
+    K, N, S = config_tuple
     print(f"Generating datapoint {i+1}/{N_batch}:")
-    if config_tuple[2] > 0:
-        c.NOISE = True
-    print(f"The noise is {c.NOISE}.")
+    print(f"Configuration: K={K}, N={N}, S={S}")
 
     try:
         # Create a unique seed for this process
@@ -661,8 +660,8 @@ def generate_datapoint(args):
             
         C_DD, C_DG, ks, cut, x, y, csd, poly, sensor, device = result
         
-        if not c.NOISE:
-            fig, _ = plot_CSD(x, y, csd, poly)
+        if S == 0:  # Replace NOISE check
+            fig, _ = plot_CSD(x, y, csd, poly, only_labels=False)
             return (C_DD, C_DG, ks, cut, x_vol, y_vol, fig, np.gradient(csd,axis=0)+np.gradient(csd,axis=1), device)
         else:
             fig, _ = plot_CSD(x, y, sensor, poly)

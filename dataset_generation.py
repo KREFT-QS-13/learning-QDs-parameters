@@ -18,30 +18,28 @@ def main():
 
     parser = argparse.ArgumentParser(description="Generating a dataset.")
 
-    parser.add_argument('--N', type=np.int32, default=250, 
+    parser.add_argument('-N', type=np.int32, default=250, 
                         help='The size of a single batch of data. Default vaule 250.')
     
-    parser.add_argument('--R', type=np.int32, default=1, 
+    parser.add_argument('-R', type=np.int32, default=1, 
                         help='The number of batches to to generate. Default vaule 1.')
     
-    parser.add_argument('--K', type=np.int32, default=2, 
+    parser.add_argument('-K', type=np.int32, default=2, 
                         help='The number of quantum dots in the system. Default vaule 2.')
+   
+    parser.add_argument('-S', type=int, default=0, 
+                        help='The number of sensors in the system.')
 
-    parser.add_argument('--Noise', type=bool, default=False, help='If True, the dataset will be generated with noise.')
-    
-    parser.add_argument('--device', type=list, default=np.ones((1,2)), help='The device to generate the dataset for.')
-
-    parser.add_argument('--S', type=int, default=1, help='The number of sensors in the system.')
+    parser.add_argument('--device', type=list, default=np.ones((1,2)), 
+                        help='The device to generate the dataset for.')
 
 
     args = parser.parse_args()
     N_batch = args.N
     R = args.R
     K = args.K
-    Noise = args.Noise
-    c.NOISE = Noise
-    
-    if c.NOISE and (args.device is None or args.S is None):
+
+    if args.S>1 and args.device is None:
         raise ValueError("The device and the number of sensors must be provided when noise is used.")
     else:
         device = np.array(args.device)
