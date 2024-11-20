@@ -66,9 +66,9 @@ def main():
             if result is not None:
                 suc += 1
             
-                C_DD, C_DG, ks, cut, x_vol, y_vol, fig, fig_gradient, device = result
-                u.save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol_range, 
-                                  y_vol_range, cut, fig, fig_gradient, device)
+                C_DD, C_DG, ks, cut, x_vol, y_vol, fig, fig_gradient, device, sensors = result
+                u.save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol_range, y_vol_range, 
+                                  cut, fig, fig_gradient, device, sensors)
                 print(f"Successfully generated datapoints: {suc}/{N_batch} ({i+1}/{N_batch}).\n\n")
 
         final_time = round(np.abs(main_start-time.time()),3)

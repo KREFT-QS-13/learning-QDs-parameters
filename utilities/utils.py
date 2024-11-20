@@ -195,7 +195,7 @@ def generate_capacitance_matrices(config_tuple:tuple[int, int, int]=None, device
             C_m = (C_m + C_m.T)/2
 
         C_DD = np.sum(C_DG, axis=1).T*np.eye(K) + C_m
-        return C_DD, C_DG
+        return C_DD, C_DG, None
     elif S>0 and device is not None:
         sensors = set_sensors_positions(S, device)
         dist_matrix = get_device_distance_matrix(device, sensors, config_tuple)
@@ -204,7 +204,7 @@ def generate_capacitance_matrices(config_tuple:tuple[int, int, int]=None, device
         
         C_DD = C_DD + np.sum(C_DG, axis=1).T*np.eye(K) + (np.sum(C_DD, axis=1)-np.diag(C_DD))*np.eye(K) 
 
-        return C_DD, C_DG
+        return C_DD, C_DG, sensors
     else:
         raise ValueError("Device is not provided! For noise generation you need to provide the device!")
 
@@ -316,7 +316,7 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
         raise ValueError("Device must be provided when using sensors (S > 0)")
         
     try:
-        C_DD, C_DG = generate_capacitance_matrices(config_tuple, device)
+        C_DD, C_DG, sensors = generate_capacitance_matrices(config_tuple, device)
         
         try:
             cut = get_cut(config_tuple)
@@ -344,9 +344,11 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
                 result = experiment.generate_CSD(
                     x_voltages=x_vol,  # V
                     y_voltages=y_vol,  # V
-
-                    target_state = [1,0,0,0,5],  # target state for transition
-                    target_transition = [-1,1,0,0,0], #target transition from target state, here transition to [2,3,2,3,5,5]
+                    
+                    #TODO: depending on the size of the system change the target state/transition accordingly
+                    target_state = [1,0,5],  # target state for transition
+                    target_transition = [-1,1,0], #target transition from target state, here transition to [2,3,2,3,5,5]
+                    
                     # compensate_sensors=True,
 
                     plane_axes=cut,
@@ -361,9 +363,9 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
             xks, yks, csd_dataks, polytopesks, sensor, _ = result
             
             if S > 0: 
-                return C_DD, C_DG, ks, cut, xks, yks, csd_dataks, polytopesks, sensor[:,:,0], device
+                return C_DD, C_DG, ks, cut, xks, yks, csd_dataks, polytopesks, sensor[:,:,0], device, sensors
             else:
-                return C_DD, C_DG, ks, cut, xks, yks, csd_dataks, polytopesks, None, device
+                return C_DD, C_DG, ks, cut, xks, yks, csd_dataks, polytopesks, None, device, sensors
             
         except Exception as e:
             print(f"Error in experiment generation: {e}")
@@ -584,7 +586,7 @@ def reconstruct_img_with_matrices(batch_num: int, img_name: str, config_tuple: t
         
         return img, C_DD, C_DG
     
-def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot, csd_gradient, device):
+def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot, csd_gradient, device, sensors):
     """
     Combine all 'saving' functions to create a datapoint.
     """
@@ -628,13 +630,14 @@ def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot, 
         'csd': csd_tensor,
         'csd_gradient': csd_gradient_tensor,
         'device': device,
+        'sensors_coordinates': sensors,
         'p_dd': c.p_dd,
         'p_dg': c.p_dg,
         'd_DD': c.d_DD,
         'd_DG': c.d_DG,
         'r_min': c.r_min,
         'r_max': c.r_max,
-    }} # 21 elements
+    }} # 22 elements
     
     save_to_hfd5(datapoints_dict)
 
@@ -659,14 +662,14 @@ def generate_datapoint(args):
         if result is None:
             return None
             
-        C_DD, C_DG, ks, cut, x, y, csd, poly, sensor, device = result
+        C_DD, C_DG, ks, cut, x, y, csd, poly, sensor, device, sensors = result
         
         if S == 0:  # Replace NOISE check
             fig, _ = plot_CSD(x, y, csd, poly, only_labels=False)
-            return (C_DD, C_DG, ks, cut, x_vol, y_vol, fig, np.gradient(csd,axis=0)+np.gradient(csd,axis=1), device)
+            return (C_DD, C_DG, ks, cut, x_vol, y_vol, fig, np.gradient(csd,axis=0)+np.gradient(csd,axis=1), device, sensors)
         else:
             fig, _ = plot_CSD(x, y, sensor, poly)
-            return (C_DD, C_DG, ks, cut, x_vol, y_vol, fig, np.gradient(csd,axis=0)+np.gradient(csd,axis=1), device)
+            return (C_DD, C_DG, ks, cut, x_vol, y_vol, fig, np.gradient(csd,axis=0)+np.gradient(csd,axis=1), device, sensors)
             
     except Exception as e:
         print(f"Execution failed for datapoint {i+1}!")
@@ -742,7 +745,7 @@ def plot_device_lattice(device: np.ndarray, sensors: list[tuple[int, int]], figs
     plt.tight_layout()
     return fig, ax
 
-def load_parameters(batch_num: int, img_name: str, config_tuple: tuple[int, int, int], param_names: list[str]) -> dict:
+def load_parameters(batch_num: int, img_name: str, config_tuple: tuple[int, int, int], param_names: list[str], print_available_params: bool=False) -> dict:
     """
     Load specific parameters from HDF5 file for a given image.
     
@@ -751,7 +754,7 @@ def load_parameters(batch_num: int, img_name: str, config_tuple: tuple[int, int,
         img_name (str): Name of the image file
         config_tuple (tuple[int, int, int]): Tuple of (K, N, S)
         param_names (list[str]): List of parameter names to load
-        
+        print_available_params (bool): Whether to print available parameters (default: False)
     Returns:
         dict: Dictionary containing requested parameters
     """
@@ -773,9 +776,10 @@ def load_parameters(batch_num: int, img_name: str, config_tuple: tuple[int, int,
             available_datasets = list(group.keys())
             available_attrs = list(group.attrs.keys())
             
-            print(f"\nAvailable parameters for {img_name}:")
-            print(f"Datasets: {available_datasets}")
-            print(f"Attributes: {available_attrs}\n")
+            if print_available_params:
+                print(f"\nAvailable parameters for {img_name}:")
+                print(f"Datasets: {available_datasets}")
+                print(f"Attributes: {available_attrs}\n")
             
             for param in param_names:
                 # Check if parameter is an attribute
@@ -794,6 +798,9 @@ def load_parameters(batch_num: int, img_name: str, config_tuple: tuple[int, int,
                     
     except Exception as e:
         print(f"Error loading parameters: {e}")
+        print(f"\nAvailable parameters for {img_name}:")
+        print(f"Datasets: {available_datasets}")
+        print(f"Attributes: {available_attrs}\n")
         print(f"Traceback: {traceback.format_exc()}")
         return None
         
