@@ -140,7 +140,7 @@ def get_device_distance_matrix(device:np.ndarray, sensors:list[tuple[float, floa
     
     return dist_matrix
 
-def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], mag_list, mean:float=1.0, std:float=0.15) -> np.ndarray:
+def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], mean:float=1.0, std:float=0.15) -> np.ndarray:
     """
         Exponential decay model for the capacitance matrix.
     """
@@ -148,8 +148,7 @@ def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], m
     
     decay = lambda x,p: p**x
     
-    # list = [5,6.5,7,7.5,8,8.5,9,9.5,10]
-    mag_conts = np.random.choice(mag_list, size=K)
+    mag_conts = np.random.choice(c.mag_list, size=K)
     
     C_dd_prime, C_dg = np.identity(K), np.identity(K)
     C_dd_prime[np.eye(C_dd_prime.shape[0], dtype=bool)] = [round(np.random.normal(c*mean, c*std), 4) for c in mag_conts]
@@ -179,12 +178,10 @@ def generate_capacitance_matrices(device:np.ndarray=None, config_tuple:tuple[int
     mean = 1.0 #aF
     std = 0.1
     C_DG = np.random.normal(mean, std, (K,K))
-    
-    mag_list = [5,6.5,7,7.5,8,8]
 
     if S == 0:
         for i in range(K):
-            diag_const = np.random.choice(mag_list)
+            diag_const = np.random.choice(c.mag_list)
 
             C_DG[i,i] = np.random.normal(diag_const*mean, diag_const*std)
         
@@ -200,7 +197,7 @@ def generate_capacitance_matrices(device:np.ndarray=None, config_tuple:tuple[int
         sensors = set_sensors_positions(S, device)
         dist_matrix = get_device_distance_matrix(device, sensors, config_tuple)
 
-        C_DD, C_DG = exp_decay_model(dist_matrix, config_tuple, mag_list, mean, std)
+        C_DD, C_DG = exp_decay_model(dist_matrix, config_tuple, mean, std)
         
         C_DD = C_DD + np.sum(C_DG, axis=1).T*np.eye(K) + (np.sum(C_DD, axis=1)-np.diag(C_DD))*np.eye(K) 
 
