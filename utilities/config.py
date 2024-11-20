@@ -10,17 +10,17 @@ RESOLUTION = 96 #96 256
 ## ------- Quantum dots system parameters -------
 d_DD = 100 # nm
 d_DG = 100 # nm
-p_dd = 0.6
+p_dd = 0.65
 p_dg = 0.3
 
-mag_list = [4,5,8,9,10,12,13,15,17,20,25]
+mag_list = [6,7,8,9,10,12,13,15,17,20]
 
 tunnel_coupling_const = 100*1e-6    
-slow_noise_amplitude = 5*1e-10 # 0.8*1e-90
-fast_noise_amplitude = 5*1e-10 # 2*1e-90  
+slow_noise_amplitude = 5*1e-8 # 0.8*1e-90
+fast_noise_amplitude = 5*1e-8 # 2*1e-90  
 
-r_min = 20 * d_DD
-r_max = 21 * d_DD
+r_min = 21 * d_DD
+r_max = 22 * d_DD
 
 system_name = ''
 def get_path(K, N, S):

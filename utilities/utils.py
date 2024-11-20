@@ -10,6 +10,7 @@ import torch
 
 import os, time
 import sys
+import ast, argparse
 import shutil
 import re
 import h5py
@@ -44,7 +45,7 @@ def get_dots_indices(device:np.ndarray) -> list[tuple[int, int]]:
     device = np.asarray(device)
 
     if device.ndim != 2:
-        raise ValueError(f"Device array must be 2D, got shape {device.shape}")
+        raise ValueError(f"Device array must be 2D, got shape {device.shape}, type {type(device)},\n{device}")
     
     indices = np.where(device == 1)
     return list(zip(indices[0], indices[1]))
@@ -344,8 +345,8 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
                     x_voltages=x_vol,  # V
                     y_voltages=y_vol,  # V
 
-                    target_state = [1,0,5],  # target state for transition
-                    target_transition = [-1,1,0], #target transition from target state, here transition to [2,3,2,3,5,5]
+                    target_state = [1,0,0,0,5],  # target state for transition
+                    target_transition = [-1,1,0,0,0], #target transition from target state, here transition to [2,3,2,3,5,5]
                     # compensate_sensors=True,
 
                     plane_axes=cut,
@@ -797,3 +798,18 @@ def load_parameters(batch_num: int, img_name: str, config_tuple: tuple[int, int,
         return None
         
     return result
+
+def parse_array(string):
+    """
+    Parse string representation of array to numpy array.
+    Examples:
+        "[[1,1], [1,1]]" -> np.array([[1,1], [1,1]])
+        "[1,1,1]" -> np.array([1,1,1])
+    """
+    try:
+        # Convert string to Python list
+        array_list = ast.literal_eval(string)
+        # Convert to numpy array
+        return np.array(array_list)
+    except (ValueError, SyntaxError) as e:
+        raise argparse.ArgumentTypeError(f"Not a valid array: {string}") from e

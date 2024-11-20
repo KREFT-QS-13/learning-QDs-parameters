@@ -2,7 +2,6 @@ import argparse
 import sys, time
 import numpy as np
 import multiprocessing as mp
-import importlib
 
 import utilities.config as c
 import utilities.utils as u
@@ -30,9 +29,8 @@ def main():
     parser.add_argument('-S', type=int, default=0, 
                         help='The number of sensors in the system.')
 
-    parser.add_argument('--device', type=list, default=np.ones((1,2)), 
-                        help='The device to generate the dataset for.')
-
+    parser.add_argument('--device', type=u.parse_array, default=np.ones((1,2), dtype=int),
+                        help='The device array in string format. Example: "[[1,1],[1,1]]"')
 
     args = parser.parse_args()
     N_batch = args.N
@@ -43,6 +41,7 @@ def main():
         raise ValueError("The device and the number of sensors must be provided when noise is used.")
     else:
         device = np.array(args.device)
+        print(f"Device configuration (shape={device.shape}):\n{device}")
         S = args.S
         N_dots = len(u.get_dots_indices(device))
         K = N_dots + S
@@ -81,5 +80,6 @@ def main():
             time.sleep(60) # two mintes break
         
         print(f"Batch number finished: {r+1}/{R}.")
+
 if __name__ == "__main__":
     main()
