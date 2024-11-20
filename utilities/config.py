@@ -16,8 +16,8 @@ p_dg = 0.3
 mag_list = [4,5,8,9,10,12,13,15,17,20,25]
 
 tunnel_coupling_const = 100*1e-6    
-slow_noise_amplitude = 5*1e-11 # 0.8*1e-90
-fast_noise_amplitude = 5*1e-11 # 2*1e-90  
+slow_noise_amplitude = 5*1e-10 # 0.8*1e-90
+fast_noise_amplitude = 5*1e-10 # 2*1e-90  
 
 r_min = 20 * d_DD
 r_max = 21 * d_DD
