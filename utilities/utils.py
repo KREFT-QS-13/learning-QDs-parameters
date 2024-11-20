@@ -148,11 +148,13 @@ def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], m
     
     decay = lambda x,p: p**x
     
-    mag_conts = np.random.choice(c.mag_list, size=K)
+    # mag_conts = np.random.choice(c.mag_list, size=K)
+    mag_const = np.random.choice(c.mag_list)
+    mag_consts = np.random.normal(loc=mag_const, scale=1.25, size=K)
     
     C_dd_prime, C_dg = np.identity(K), np.identity(K)
-    C_dd_prime[np.eye(C_dd_prime.shape[0], dtype=bool)] = [round(np.random.normal(c*mean, c*std), 4) for c in mag_conts]
-    C_dg[np.eye(C_dg.shape[0], dtype=bool)] = [round(np.random.normal(c*mean, c*std), 4) for c in mag_conts]
+    C_dd_prime[np.eye(C_dd_prime.shape[0], dtype=bool)] = [round(np.random.normal(c*mean, c*std), 4) for c in mag_consts]
+    C_dg[np.eye(C_dg.shape[0], dtype=bool)] = [round(np.random.normal(c*mean, c*std), 4) for c in mag_consts]
 
 
     for i in range(K):
@@ -164,7 +166,7 @@ def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], m
     return C_dd_prime, C_dg
 
 
-def generate_capacitance_matrices(device:np.ndarray=None, config_tuple:tuple[int, int, int]=None) -> tuple[np.ndarray, np.ndarray]:
+def generate_capacitance_matrices(config_tuple:tuple[int, int, int]=None, device:np.ndarray=None) -> tuple[np.ndarray, np.ndarray]:
     """
         Generate random capacitance matrices for a given number of dots K from a normal distribution.
         
@@ -313,7 +315,7 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
         raise ValueError("Device must be provided when using sensors (S > 0)")
         
     try:
-        C_DD, C_DG = generate_capacitance_matrices(device, config_tuple)
+        C_DD, C_DG = generate_capacitance_matrices(config_tuple, device)
         
         try:
             cut = get_cut(config_tuple)
@@ -335,8 +337,8 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
                 compute_polytopes=True
             )
             else:
-                capacitance_config, tunneling_config, sensor_config = generate_experiment_config(C_DD, C_DG, config_tuple, device)
-                experiment = Experiment(capacitance_config, tunneling_config, sensor_config)
+                # capacitance_config, tunneling_config, sensor_config = generate_experiment_config(C_DD, C_DG, config_tuple, device)
+                experiment = Experiment(*generate_experiment_config(C_DD, C_DG, config_tuple, device))
 
                 result = experiment.generate_CSD(
                     x_voltages=x_vol,  # V
@@ -344,10 +346,11 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
 
                     target_state = [1,0,5],  # target state for transition
                     target_transition = [-1,1,0], #target transition from target state, here transition to [2,3,2,3,5,5]
+                    # compensate_sensors=True,
 
                     plane_axes=cut,
                     compute_polytopes=True,
-                    use_sensor_signal=use_sensor_signal
+                    use_sensor_signal=use_sensor_signal,
                 )
             
             if result is None:
@@ -737,3 +740,60 @@ def plot_device_lattice(device: np.ndarray, sensors: list[tuple[int, int]], figs
     
     plt.tight_layout()
     return fig, ax
+
+def load_parameters(batch_num: int, img_name: str, config_tuple: tuple[int, int, int], param_names: list[str]) -> dict:
+    """
+    Load specific parameters from HDF5 file for a given image.
+    
+    Args:
+        batch_num (int): Batch number
+        img_name (str): Name of the image file
+        config_tuple (tuple[int, int, int]): Tuple of (K, N, S)
+        param_names (list[str]): List of parameter names to load
+        
+    Returns:
+        dict: Dictionary containing requested parameters
+    """
+    img_name = check_and_correct_img_name(img_name)
+    path = get_path_hfd5(batch_num, config_tuple)
+    
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"HDF5 file not found at: {path}")
+    
+    result = {}
+    try:
+        with h5py.File(path, 'r') as f:
+            if img_name not in f:
+                raise KeyError(f"Image {img_name} not found in HDF5 file")
+                
+            group = f[img_name]
+            
+            # Get list of all available parameters (datasets and attributes)
+            available_datasets = list(group.keys())
+            available_attrs = list(group.attrs.keys())
+            
+            print(f"\nAvailable parameters for {img_name}:")
+            print(f"Datasets: {available_datasets}")
+            print(f"Attributes: {available_attrs}\n")
+            
+            for param in param_names:
+                # Check if parameter is an attribute
+                if param in group.attrs:
+                    result[param] = group.attrs[param]
+                    continue
+                    
+                # Check if parameter is a dataset
+                if param in group:
+                    result[param] = group[param][:]
+                    continue
+                    
+                # Parameter not found
+                print(f"Warning: Parameter '{param}' not found for image {img_name}")
+                result[param] = None
+                    
+    except Exception as e:
+        print(f"Error loading parameters: {e}")
+        print(f"Traceback: {traceback.format_exc()}")
+        return None
+        
+    return result

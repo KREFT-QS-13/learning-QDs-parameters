@@ -7,20 +7,20 @@ PATH_0 = "./datasets/"
 DPI = 100
 RESOLUTION = 96 #96 256
 
-## ------- Quantum dots system parameters 
+## ------- Quantum dots system parameters -------
 d_DD = 100 # nm
 d_DG = 100 # nm
-p_dd = 0.35
-p_dg = 0.1
+p_dd = 0.6
+p_dg = 0.3
 
-mag_list = [10,12,15,17]
+mag_list = [4,5,8,9,10,12,13,15,17,20,25]
 
-tunnel_coupling_const = 100*1e-5    
-slow_noise_amplitude = 2.5*1e-6 # 0.8*1e-90
-fast_noise_amplitude = 2.5*1e-6 # 2*1e-90  
+tunnel_coupling_const = 100*1e-6    
+slow_noise_amplitude = 5*1e-11 # 0.8*1e-90
+fast_noise_amplitude = 5*1e-11 # 2*1e-90  
 
-r_min = 3 * d_DD
-r_max = 3.5 * d_DD
+r_min = 20 * d_DD
+r_max = 21 * d_DD
 
 system_name = ''
 def get_path(K, N, S):
@@ -42,5 +42,5 @@ def validate_state(K, N, S):
         raise ValueError(f"Invalid configuration: S ({S}) cannot be negative")
 
 
-## ------- Machine Learning Model parameters   
+## ------- Machine Learning Model parameters ------- 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
