@@ -89,7 +89,7 @@ def draw_random(S:int, device:np.ndarray) -> list[float]:
         Draw random r0 for S sensors.
     """
     nx, ny = device.shape
-    r_min = 0.5*np.sqrt(nx**2 + ny**2)*c.d_DD * 1.5 # or c.r_min
+    r_min = c.r_min  # or 0.5*np.sqrt(nx**2 + ny**2)*c.d_DD * 1.5
     r_max = c.r_max
 
     list_r0 = []
@@ -296,7 +296,7 @@ def generate_experiment_config(C_DD:np.ndarray, C_DG:np.ndarray, config_tuple:tu
 
     sensor_config = {
         "sensor_dot_indices": [-1],  #Indices of the sensor dots
-        "sensor_detunings": [-0.02],  #Detuning of the sensor dots
+        "sensor_detunings": [-0.02],  #Detuning of the sensor dots , -0.02
         "noise_amplitude": {"fast_noise":c.fast_noise_amplitude, "slow_noise": c.slow_noise_amplitude}, #Noise amplitude for the sensor dots in eV
         "peak_width_multiplier": 25,  #Width of the sensor peaks in the units of thermal broadening m *kB*T/0.61.
     }
