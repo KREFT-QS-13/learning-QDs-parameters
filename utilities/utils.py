@@ -167,7 +167,8 @@ def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], m
     return C_dd_prime, C_dg
 
 
-def generate_capacitance_matrices(config_tuple:tuple[int, int, int]=None, device:np.ndarray=None) -> tuple[np.ndarray, np.ndarray]:
+def generate_capacitance_matrices(config_tuple:tuple[int, int, int]=None, device:np.ndarray=None,
+                                  sensors_radius:list[float]=None, sensors_angle:list[float]=None) -> tuple[np.ndarray, np.ndarray]:
     """
         Generate random capacitance matrices for a given number of dots K from a normal distribution.
         
@@ -197,7 +198,7 @@ def generate_capacitance_matrices(config_tuple:tuple[int, int, int]=None, device
         C_DD = np.sum(C_DG, axis=1).T*np.eye(K) + C_m
         return C_DD, C_DG, None
     elif S>0 and device is not None:
-        sensors = set_sensors_positions(S, device)
+        sensors = set_sensors_positions(S, device, sensors_radius, sensors_angle)
         dist_matrix = get_device_distance_matrix(device, sensors, config_tuple)
 
         C_DD, C_DG = exp_decay_model(dist_matrix, config_tuple, mean, std)
@@ -223,7 +224,8 @@ def get_cut(config_tuple):
     cut[tuple(zip(*enumerate(indices)))] = 1
     return cut[np.argmax(cut, axis=1).argsort()]
 
-def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesks: list[np.ndarray], only_edges:bool=True, only_labels:bool=True, res:int=RESOLUTION, dpi:int=DPI):
+def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesks: list[np.ndarray], 
+             only_edges:bool=True, only_labels:bool=True, res:int=RESOLUTION, dpi:int=DPI):
     """
         Plot the charge stability diagram (CSD) (res by res, default 256 by 256).
     """
@@ -302,7 +304,8 @@ def generate_experiment_config(C_DD:np.ndarray, C_DG:np.ndarray, config_tuple:tu
 
     return capacitance_config, tunneling_config, sensor_config
 
-def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.ndarray=None, config_tuple:tuple[int,int,int]=None):
+def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.ndarray=None, 
+                     config_tuple:tuple[int,int,int]=None, sensors_radius:list[float]=None, sensors_angle:list[float]=None):
     """
         Run the QDarts experiment.
     """
@@ -316,7 +319,7 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
         raise ValueError("Device must be provided when using sensors (S > 0)")
         
     try:
-        C_DD, C_DG, sensors = generate_capacitance_matrices(config_tuple, device)
+        C_DD, C_DG, sensors = generate_capacitance_matrices(config_tuple, device, sensors_radius, sensors_angle)
         
         try:
             cut = get_cut(config_tuple)
@@ -643,7 +646,7 @@ def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot, 
 
 
 def generate_datapoint(args):
-    x_vol, y_vol, ks, device, i, N_batch, config_tuple = args
+    x_vol, y_vol, ks, device, i, N_batch, config_tuple, sensors_radius, sensors_angle = args
     K, N, S = config_tuple
     print(f"Generating datapoint {i+1}/{N_batch}:")
     print(f"Configuration: K={K}, N={N}, S={S}")
@@ -658,7 +661,7 @@ def generate_datapoint(args):
         np.random.seed(unique_seed)
         random.seed(unique_seed)
         
-        result = generate_dataset(x_vol, y_vol, ks, device, config_tuple)
+        result = generate_dataset(x_vol, y_vol, ks, device, config_tuple, sensors_radius, sensors_angle)
         if result is None:
             return None
             
@@ -745,7 +748,8 @@ def plot_device_lattice(device: np.ndarray, sensors: list[tuple[int, int]], figs
     plt.tight_layout()
     return fig, ax
 
-def load_parameters(batch_num: int, img_name: str, config_tuple: tuple[int, int, int], param_names: list[str], print_available_params: bool=False) -> dict:
+def load_parameters(batch_num: int, img_name: str, config_tuple: tuple[int, int, int], 
+                    param_names: list[str], print_available_params: bool=False) -> dict:
     """
     Load specific parameters from HDF5 file for a given image.
     

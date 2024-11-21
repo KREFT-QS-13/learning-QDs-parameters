@@ -31,11 +31,20 @@ def main():
 
     parser.add_argument('--device', type=u.parse_array, default=np.ones((1,2), dtype=int),
                         help='The device array in string format. Example: "[[1,1],[1,1]]"')
+    
+    parser.add_argument('--sensors_radius', type=u.parse_array, default=None,
+                        help='The sensors radius in string format. Example: "[1,1,1]"')
+    
+    parser.add_argument('--sensors_angle', type=u.parse_array, default=None,
+                        help='The sensors angle in string format. Example: "[0,0,0]"')
+    
 
     args = parser.parse_args()
     N_batch = args.N
     R = args.R
     K = args.K
+    sensors_radius = args.sensors_radius
+    sensors_angle = args.sensors_angle
 
     if args.S>1 and args.device is None:
         raise ValueError("The device and the number of sensors must be provided when noise is used.")
@@ -45,6 +54,14 @@ def main():
         S = args.S
         N_dots = len(u.get_dots_indices(device))
         K = N_dots + S
+
+    if sensors_radius is not None or sensors_angle is not None:
+        assert S>0, "The number of sensors must be provided when sensors_radius or sensors_angle are used."
+    if sensors_radius is not None:
+        assert len(sensors_radius) == S, "The number of sensors radius must be equal to the number of sensors."
+    if sensors_angle is not None:
+        assert len(sensors_angle) == S, "The number of sensors angle must be equal to the number of sensors."
+
         
     config_tuple = (K, N_dots, S)
     c.validate_state(*config_tuple)
@@ -55,7 +72,7 @@ def main():
         u.create_paths(config_tuple)
         
         # Prepare arguments for multiprocessing
-        pool_args = [(x_vol, y_vol, ks, device, i, N_batch, config_tuple) for i in range(N_batch)]
+        pool_args = [(x_vol, y_vol, ks, device, i, N_batch, config_tuple, sensors_radius, sensors_angle) for i in range(N_batch)]
         
         # Create a multiprocessing pool
         with mp.Pool(processes=mp.cpu_count()) as pool:

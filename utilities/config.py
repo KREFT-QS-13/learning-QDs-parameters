@@ -20,7 +20,7 @@ slow_noise_amplitude = 5*1e-8 # 0.8*1e-90
 fast_noise_amplitude = 5*1e-8 # 2*1e-90  
 
 r_min = 21 * d_DD
-r_max = 22 * d_DD
+r_max = 22   * d_DD
 
 system_name = ''
 def get_path(K, N, S):
