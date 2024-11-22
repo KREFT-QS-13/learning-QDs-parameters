@@ -23,12 +23,12 @@ sys.path.append('./qdarts')
 from qdarts.experiment import Experiment
 from qdarts.plotting import plot_polytopes
 
-from models.transfer_CNN import TransferLearningCNN
+from models.transfer_CNN import ResNet
 from models.vanilla_CNN import VanillaCNN
 
 
 # ----------------------------- LOAD DATA
-def load_datapoints(param_names:list, all_batches=True, batches:list=None):
+def load_datapoints(config_tuple, param_names:list, all_batches=True, batches:list=None):
     """
     Args:
         param_names - the list of the parameters' names to load from .h5 file
@@ -39,10 +39,10 @@ def load_datapoints(param_names:list, all_batches=True, batches:list=None):
         A dictionary where keys are param_names and values are lists of elements from all batches
     """
     if all_batches and batches is None:
-        batches_nums = np.arange(1, u.count_directories_in_folder()+1)
+        batches_nums = np.arange(1, u.count_directories_in_folder(config_tuple)+1)
     elif all_batches==False and batches is not None:
         if all(isinstance(b, (int, np.integer)) and b > 0 for b in batches):
-            max_batch = u.count_directories_in_folder()
+            max_batch = u.count_directories_in_folder(config_tuple)
             if all(b <= max_batch for b in batches):
                 batches_nums = batches
             else:
@@ -54,9 +54,9 @@ def load_datapoints(param_names:list, all_batches=True, batches:list=None):
       
     # all_groups_data = {param:[] for param in param_names}
     all_groups_data = []
-
+    print(f"Loading batches: {len(batches_nums)} from {u.get_path_hfd5(batches_nums[0], config_tuple)}")
     for b in batches_nums:
-        with h5py.File(u.get_path_hfd5(b), 'r') as f:
+        with h5py.File(u.get_path_hfd5(b, config_tuple), 'r') as f:
             def process_group(name, obj):
                 if isinstance(obj, h5py.Group):
                     group_data = []
@@ -65,7 +65,7 @@ def load_datapoints(param_names:list, all_batches=True, batches:list=None):
                             group_data.append(obj[param][()])
                             # all_groups_data[param].append(obj[param][()])
                         else:
-                            raise ValueError(f"There is no group/data name {param} in the file {u.get_path_hfd5(b)}.")
+                            raise ValueError(f"There is no group/data name {param} in the file {u.get_path_hfd5(b, config_tuple)}.")
                     
                     all_groups_data.append(group_data)
 
@@ -81,9 +81,9 @@ def filter_dataset(dps:list):
 
     for idx, x in enumerate(dps):
         C_DD, C_DG = x[1], x[2]
-        
+        K = C_DD.shape[0]
         # Check if all diagonal elements of C_DD are greater than or equal to min_value
-        if all(C_DD[i][i] >= min_value for i in range(c.K)):
+        if all(C_DD[i][i] >= min_value for i in range(K)):
             # Create a hashable representation of the datapoint
             hashable_rep = (tuple(C_DD.flatten()), tuple(C_DG.flatten()))
             
@@ -123,9 +123,10 @@ def preprocess_csd(csd_array:np.ndarray):
     return csd_tensor
 
 def preprocess_capacitance_matrices(c_dd:np.ndarray, c_dg:np.ndarray):
+    K = c_dd.shape[0]
     if c.MODE == 1:
-        c_dd = c_dd[np.triu_indices(n=c.K)]
-        return np.concatenate((c_dd, c_dg.reshape(c.K**2)), axis=None)
+        c_dd = c_dd[np.triu_indices(n=K)]
+        return np.concatenate((c_dd, c_dg.reshape(K**2)), axis=None)
     elif c.MODE  == 2:
         return np.concatenate((np.diag(c_dd), np.diag(c_dg)), axis=None)
     elif c.MODE  == 3:
@@ -133,13 +134,13 @@ def preprocess_capacitance_matrices(c_dd:np.ndarray, c_dg:np.ndarray):
     else:
         raise ValueError(f"Mode must be 1 (all params), 2(both diags), 3(diag C_DD), {c.MODE} is not a valid mode.")
 
-def reconstruct_capacitance_matrices(output:np.ndarray):
+def reconstruct_capacitance_matrices(output:np.ndarray, K:int):
     if c.MODE == 1:
-        c_dd = np.zeros((c.K, c.K))
-        c_dd[np.triu_indices(n=c.K)] = output[:c.K*(c.K+1)//2]
+        c_dd = np.zeros((K, K))
+        c_dd[np.triu_indices(n=K)] = output[:K*(K+1)//2]
         c_dd = c_dd + c_dd.T 
         c_dd[np.diag_indices_from(c_dd)] = c_dd[np.diag_indices_from(c_dd)]/2
-        c_dg = output[c.K*(c.K+1)//2:].reshape(c.K, c.K)
+        c_dg = output[K*(K+1)//2:].reshape(K, K)
     else:
         raise ValueError(f"For modes different than 1, the function is not implemented (ambiguous solution).")
     # elif c.MODE == 2:
@@ -174,8 +175,8 @@ def preprocess_data(dps:list, filtered:bool=True):
 
     return np.array(X), np.array(Y)
 
-def prepare_data(param_names:list=['csd', 'C_DD', 'C_DG'], all_batches=True, batches:list=None, datasize_cut:int=None):
-    datapoints = load_datapoints(param_names, all_batches, batches)
+def prepare_data(config_tuple, param_names:list=['csd', 'C_DD', 'C_DG'], all_batches=True, batches:list=None, datasize_cut:int=None):
+    datapoints = load_datapoints(config_tuple, param_names, all_batches, batches)
     X, Y = preprocess_data(datapoints)
 
     if datasize_cut is not None and datasize_cut > len(X):
@@ -482,7 +483,7 @@ def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir='
         print(f"Evaluation: Test Accuracy (Global): {global_test_accuracy:.2f}%, Test Accuracy (Local): {local_test_accuracy:.2f}%")
         print(f"Evaluation: Test Loss: {test_loss:.5f}, Test MSE: {test_mse:.5f}")
         print(f"Evaluation: Vec. Test Local Acc.: {np.round(100*vec_local_test_accuracy, 2)}%")
-        print(f"Evaluation: MSE: {metrics['MSE']:.2f}, MAE: {metrics['MAE']:.2f}, R2: {metrics['R2']:.2f}\n")
+        print(f"Evaluation: MSE: {metrics['MSE']:.6f}, MAE: {metrics['MAE']:.6f}, R2: {metrics['R2']:.4f}\n")
 
         # Extract targets and outputs from predictions
         targets = np.concatenate([p[1] for p in predictions])
@@ -765,6 +766,8 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
             'test_split': test_split,
             'seed': seed,
             'init_weights': init_weights,
+            'custom_head': train_params.get('custom_head', '[512, 256]'),
+            'dropout': result['config']['params'].get('dropout', 'N/A'),
             'batch_size':  train_params.get('batch_size', 'N/A'),
             'epochs':  train_params.get('epochs', 'N/A'),
             'learning_rate':  train_params.get('learning_rate', 'N/A'),
@@ -806,12 +809,13 @@ def explain_output(model_path, input_tensor):
             - prediction (numpy.ndarray): Model's output prediction
             - reconstructed_matrices (tuple): (C_DD, C_DG) reconstructed matrices
     """
+    K = input_tensor.shape[0]
     # Ensure input is on the correct device
     input_tensor = input_tensor.to(c.DEVICE)
     
     # Load model architecture and weights
     if 'resnet' in model_path.lower():
-        model = TransferLearningCNN(name="transfer_cnn")
+        model = ResNet(name="ResNet_cnn")
     else:
         model = VanillaCNN(name="vanilla_cnn")
     
@@ -852,7 +856,7 @@ def explain_output(model_path, input_tensor):
     gradcam_overlay = overlay_heatmap_on_image(input_image, gradcam, alpha=0.7)
     
     # Reconstruct C_DD and C_DG matrices from prediction
-    reconstructed_matrices = reconstruct_capacitance_matrices(prediction)
+    reconstructed_matrices = reconstruct_capacitance_matrices(prediction, K)
     
     return saliency_overlay, gradcam_overlay, prediction, reconstructed_matrices
 
@@ -900,7 +904,7 @@ def grad_cam(model, input_tensor):
         numpy.ndarray: Grad-CAM heatmap of shape (H, W)
     """
     # Get the last convolutional layer
-    if hasattr(model, 'base_model'):  # TransferLearningCNN
+    if hasattr(model, 'base_model'):  # ResNet
         target_layer = model.base_model.layer4[-1]
     else:  # VanillaCNN
         target_layer = [m for m in model.network.modules() if isinstance(m, nn.Conv2d)][-1]
@@ -980,26 +984,28 @@ def overlay_heatmap_on_image(image: torch.Tensor, heatmap: np.ndarray, alpha: fl
 
     return heatmap_overlay
 
-def generate_csd_from_prediction(prediction):
-    C_DD, C_DG = reconstruct_capacitance_matrices(prediction)
-    capacitance_config = {
-        "C_DD" : C_DD,  #dot-dot capacitance matrix
-        "C_Dg" : C_DG,  #dot-gate capacitance matrix
-        "ks" : None,       
-    }
+# TODO: Rewrite this function to work without need of c.K, but with config tuple
+def generate_csd_from_prediction(config_tuple, prediction):
+    return NotImplementedError()
+#     C_DD, C_DG = reconstruct_capacitance_matrices(prediction, config_tuple[0])
+#     capacitance_config = {
+#         "C_DD" : C_DD,  #dot-dot capacitance matrix
+#         "C_Dg" : C_DG,  #dot-gate capacitance matrix
+#         "ks" : None,       
+#     }
 
-    cuts = u.get_cut(c.K)
-    # x_vol = np.linspace(-c.V_G, c.V_G, c.RESOLUTION)
-    x_vol = np.linspace(0, 0.05, 500)
-    y_vol = np.linspace(0, 0.05, 500)
+#     cuts = u.get_cut(config_tuple[0])
+#     # x_vol = np.linspace(-c.V_G, c.V_G, c.RESOLUTION)
+#     x_vol = np.linspace(0, 0.05, c.RESOLUTION)
+#     y_vol = np.linspace(0, 0.05, c.RESOLUTION)
 
-    xks, yks, csd_dataks, polytopesks, _, _ =  Experiment(capacitance_config).generate_CSD(
-                                                x_voltages = x_vol,  #V
-                                                y_voltages = y_vol,  #V
-                                                plane_axes = cuts,
-                                                compute_polytopes = True,
-                                                use_virtual_gates = False)   
+#     xks, yks, csd_dataks, polytopesks, _, _ =  Experiment(capacitance_config).generate_CSD(
+#                                                 x_voltages = x_vol,  #V
+#                                                 y_voltages = y_vol,  #V
+#                                                 plane_axes = cuts,
+#                                                 compute_polytopes = True,
+#                                                 use_virtual_gates = False)   
     
-    pred_csd = u.plot_CSD(xks, yks, csd_dataks, polytopesks)
+#     pred_csd = u.plot_CSD(xks, yks, csd_dataks, polytopesks)
 
-    return pred_csd
+#     return pred_csd

@@ -72,7 +72,8 @@ def main():
         u.create_paths(config_tuple)
         
         # Prepare arguments for multiprocessing
-        pool_args = [(x_vol, y_vol, ks, device, i, N_batch, config_tuple, sensors_radius, sensors_angle) for i in range(N_batch)]
+        pool_args = [(x_vol, y_vol, ks, device, i, N_batch, 
+                      config_tuple, sensors_radius, sensors_angle) for i in range(N_batch)]
         
         # Create a multiprocessing pool
         with mp.Pool(processes=mp.cpu_count()) as pool:

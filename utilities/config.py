@@ -1,8 +1,8 @@
 import os 
 import torch
 
-PATH_0 = "./datasets/"
-# PATH_0 = "./ALICE/"
+# PATH_0 = "./datasets/"
+PATH_0 = "./ALICE/"
 
 DPI = 100
 RESOLUTION = 96 #96 256
@@ -44,3 +44,5 @@ def validate_state(K, N, S):
 
 ## ------- Machine Learning Model parameters ------- 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+MODE = 1
+
