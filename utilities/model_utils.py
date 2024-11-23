@@ -491,6 +491,7 @@ def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir='
         
         # Create and save the L2 norm polar plot
         plot_l2_norm_polar(targets, outputs, model_save_dir, train_params['epsilon'])
+        plot_l2_norm_polar(targets, outputs, model_save_dir, train_params['epsilon'], num_groups=5)
         
         # Save the model
         model_path = os.path.join(model_save_dir, f"{model_name}.pth")
@@ -500,7 +501,9 @@ def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir='
         result = {
             'config': {
                 'model_name': config['model'].__name__,
-                'params': config['params']
+                'params': config['params'],
+                'custom_head': config['params'].get('custom_head', None),
+                'dropout': config['params'].get('dropout', None)
             },
             'input_shape': X.shape[1:],
             'output_shape': y.shape[1:],
@@ -572,12 +575,13 @@ def plot_learning_curves(history, result, save_dir):
     plt.savefig(os.path.join(save_dir, 'learning_curves.png'))
     plt.close()
 
-def plot_l2_norm_polar(targets, outputs, save_dir, epsilon, num_points=None):
+def plot_l2_norm_polar(targets, outputs, save_dir, epsilon, num_groups=6, num_points=None):
     """
-    Create a plot in polar coordinates with points as distances between
+    Create two plots in polar coordinates with points as distances between
     the origin and the L2 norm of the difference of targets and outputs.
-    The plot will have concentric circles at integer radii and no angle labels.
+    The first plot will have concentric circles at integer radii and no angle labels.
     Colors and shapes represent distance groups from the origin based on epsilon.
+    The second plot will have the intrested 5 groups.
 
     Args:
         targets (np.array): The true values.
@@ -594,18 +598,18 @@ def plot_l2_norm_polar(targets, outputs, save_dir, epsilon, num_points=None):
     # Calculate L2 norms
     l2_norms = np.linalg.norm(targets - outputs, axis=1)
     
-    # If num_points is specified and less than the total number of points, randomly sample
+    # Sample points if specified
     if num_points is not None and num_points < len(l2_norms):
         indices = np.random.choice(len(l2_norms), num_points, replace=False)
         l2_norms = l2_norms[indices]
     else:
         num_points = len(l2_norms)
     
-    # Create angles for each point (evenly spaced)
+    # Create angles for each point
     theta = np.linspace(0, 2*np.pi, num_points, endpoint=False)
     
-    # Create the figure
-    fig, ax = plt.subplots(figsize=(16, 14), subplot_kw=dict(projection='polar'))
+    # Plot 1: Custom ranges or epsilon-based
+    fig1, ax1 = plt.subplots(figsize=(16, 14), subplot_kw=dict(projection='polar'))
     
     # Define color groups and shapes based on epsilon
     color_groups = np.minimum(np.floor(l2_norms / epsilon), 5)  # 6 groups (0 to 5)
@@ -616,41 +620,49 @@ def plot_l2_norm_polar(targets, outputs, save_dir, epsilon, num_points=None):
     percentages = [np.sum(color_groups == i) / len(color_groups) * 100 for i in range(6)]
     
     # Plot the points
-    for i in range(6):
+    for i in range(num_groups):
         mask = color_groups == i
         if i < 5:
             label = f'{i*epsilon:.2f} ≤ L2 < {(i+1)*epsilon:.2f} ({percentages[i]:.1f}%)'
         else:
             label = f'L2 ≥ {5*epsilon:.2f} ({percentages[i]:.1f}%)'
-        ax.scatter(theta[mask], l2_norms[mask], c=[colors[i]], marker=shapes[i], label=label, alpha=0.8)
+        ax1.scatter(theta[mask], l2_norms[mask], c=[colors[i]], marker=shapes[i], label=label, alpha=0.8)
     
     # Set the rmax to be the ceiling of the max L2 norm
     rmax = np.ceil(np.max(l2_norms))
-    ax.set_rmax(rmax)
+    ax1.set_rmax(rmax)
     
     # Set the rticks to be multiples of epsilon
-    rticks = np.concatenate([
-        np.arange(0, min(5*epsilon, rmax), epsilon),
-        np.arange(5*epsilon, rmax + epsilon, max(epsilon, 1))
-    ])
+    if num_groups > 5:
+        rticks = np.concatenate([
+            np.arange(0, min(5*epsilon, rmax), epsilon),
+            np.arange(5*epsilon, rmax + epsilon, max(epsilon, 1))
+        ])
+        # Set the rmax to be the ceiling of the max L2 norm
+        rmax = np.ceil(np.max(l2_norms))
+        ax1.set_rmax(rmax)
+    else:
+        rticks = np.arange(0, (num_groups+1)*epsilon, epsilon)
+        ax1.set_rmax(rticks[-1])
+
     rticks = np.unique(rticks)  # Remove any duplicates
-    ax.set_rticks(rticks)
+    ax1.set_rticks(rticks)
     
     # Remove the angle labels
-    ax.set_xticklabels([])
+    ax1.set_xticklabels([])
     
     # Add labels and title
-    ax.set_title(f"L2 Norm of Target-Output Difference\n(ε={epsilon:.2f}, {num_points} points)", fontsize=22)
+    ax1.set_title(f"L2 Norm of Target-Output Difference\n(ε={epsilon:.2f}, {num_points} points)", fontsize=22)
     
     # Add legend for shapes and colors
-    legend = ax.legend(loc='center left', bbox_to_anchor=(1.05, 0.5), title="L2 Norm Groups", fontsize=18)
+    legend = ax1.legend(loc='center left', bbox_to_anchor=(1.05, 0.5), title="L2 Norm Groups", fontsize=18)
     plt.setp(legend.get_title(), fontsize=16)
     
     # Adjust layout manually
     plt.subplots_adjust(right=0.75, bottom=0.05, top=0.95)
     
     # Save the plot
-    plt.savefig(os.path.join(save_dir, 'l2_norm_polar_plot.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(save_dir, f'l2_norm_polar_plot_{num_groups}_groups.png'), dpi=300, bbox_inches='tight')
     plt.close()
 
     print(f"L2 norm polar plot saved in {save_dir}")
@@ -703,6 +715,7 @@ def save_model(model, save_dir, model_name):
     u.ensure_dir_exists(save_dir)
     # Save in PyTorch's native format
     torch.save(model.state_dict(), os.path.join(save_dir, f'{model_name}.pth'))
+
 def save_model_weights(model, path):
     """
     Save the model weights to a file.
@@ -766,7 +779,7 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
             'test_split': test_split,
             'seed': seed,
             'init_weights': init_weights,
-            'custom_head': train_params.get('custom_head', '[512, 256]'),
+            'custom_head':  result['config']['params'].get('custom_head', '[512, 256]'),
             'dropout': result['config']['params'].get('dropout', 'N/A'),
             'batch_size':  train_params.get('batch_size', 'N/A'),
             'epochs':  train_params.get('epochs', 'N/A'),

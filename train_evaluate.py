@@ -42,8 +42,8 @@ def main():
     # X, y = mu.prepare_data()
     
     datasize_cut = 50000
-    X, y = mu.prepare_data(config_tuple, datasize_cut=datasize_cut)
-    # X, y = mu.prepare_data(all_batches=False, batches=np.arange(1,5)) # for testing
+    # X, y = mu.prepare_data(config_tuple, datasize_cut=datasize_cut)
+    X, y = mu.prepare_data(config_tuple,  all_batches=False, batches=np.arange(1,11)) # for testing
     print(f'Successfully prepared {len(X)} datapoints with input size {c.RESOLUTION}x{c.RESOLUTION}.\n')
 
     # Define model configurations
@@ -66,8 +66,8 @@ def main():
                 'name': 'resnet18_model',
                 'base_model': 'resnet18',
                 'pretrained': True,
-                'dropout': 0.25,
-                'custom_head': [2048, 1024],
+                'dropout': 0.5,
+                'custom_head': [2048, 512],
             }
         },
     ]
@@ -87,11 +87,11 @@ def main():
         {   
             'batch_size': 64, # 16, 32, 64
             'epochs': 50, #5, 20, 50, 100
-            'learning_rate': 0.0005, #0.0005, 0.0001, 0.005, 0.001
+            'learning_rate': 0.001, #0.0005, 0.0001, 0.005, 0.001
             'val_split': 0.2,
             'test_split': 0.2,
             'random_state': 42,
-            'epsilon': 0.0,
+            'epsilon': 0.1,
             'init_weights': None,   
         },
     ]  
