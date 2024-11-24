@@ -1,11 +1,12 @@
 import os 
 import torch
 
-# PATH_0 = "./datasets/"
-# PATH_0 = "./ALICE/"
 PATH_0 = "./"
+# PATH_0 = "../../data1/Project_data_and_results/datasets/"
 
-PATH_TO_DATASETS = "datasets/"
+# PATH_TO_DATASETS = "datasets/"
+PATH_TO_DATASETS = "ALICE/"
+
 PATH_TO_RESULTS = "Results/"
 
 DPI = 100
@@ -17,14 +18,14 @@ d_DG = 100 # nm
 p_dd = 0.65
 p_dg = 0.3
 
-mag_list = [5,5.5,6,7,8,9,10,12,13,15,17,20]
+mag_list = [8.5,9.5,9,10,11,12.5,13,14,15,16,18]
 
 tunnel_coupling_const = 100*1e-6    
 slow_noise_amplitude = 5*1e-8 # 0.8*1e-90
 fast_noise_amplitude = 5*1e-8 # 2*1e-90  
 
-r_min = 16 * d_DD
-r_max = 21.5 * d_DD
+r_min = 13.5 * d_DD
+r_max = 23.5 * d_DD
 
 system_name = ''
 def get_path(K, N, S):
