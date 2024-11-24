@@ -10,39 +10,40 @@ import utilities.config as c
 import utilities.model_utils as mu
 from models.transfer_CNN import ResNet
 
-def grid_search(config_tuple:tuple):
+def grid_search(config_tuple:tuple, datasize_cut:int=35000):
     """
     Perform grid search for ResNet hyperparameters.
     """
     K, N, S = config_tuple
-    # Define parameter grids
     # For testing
-    param_grid = {
-        'batch_size': [32],
-        'learning_rate': [0.01],
-        'base_model': ['resnet18', 'resnet34'],
-        'dropout': [0.7],
-        'custom_head': [
-            [1024, 512], 
-        ]
-    }
     # param_grid = {
-    #     'batch_size': [16, 32, 64, 128, 256, 512], # 6
-    #     'learning_rate': [0.0001, 0.0005, 0.001, 0.005, 0.01], # 5
-    #     'base_model': ['resnet18', 'resnet34'], # 2
-    #     'dropout': [0.0, 0.1, 0.3, 0.5, 0.7], # 5
+    #     'batch_size': [32],
+    #     'learning_rate': [0.01],
+    #     'base_model': ['resnet18', 'resnet34'],
+    #     'dropout': [0.7],
     #     'custom_head': [
-    #         [2048, 1024],
-    #         [4096, 2048],
     #         [1024, 512], 
-    #         [2048, 1024, 512], 
-    #         [4096, 2048, 1024],
-    #     ] # 5
+    #     ]
     # }
+    
+    # Define parameter grids
+    param_grid = {
+        'batch_size': [16, 32, 64, 128, 256, 512], # 6
+        'learning_rate': [0.0001, 0.0005, 0.001, 0.005, 0.01], # 5
+        'base_model': ['resnet18', 'resnet34'], # 2
+        'dropout': [0.0, 0.1, 0.3, 0.5, 0.7], # 5
+        'custom_head': [
+            [2048, 1024],
+            [4096, 2048],
+            [1024, 512], 
+            [2048, 1024, 512], 
+            [4096, 1024, 256],
+        ] # 5
+    }
 
     # Load data
     print("Loading and preparing datasets...")
-    X, y = mu.prepare_data(config_tuple, datasize_cut=35000)
+    X, y = mu.prepare_data(config_tuple, datasize_cut=datasize_cut)
     print(f'Successfully prepared {len(X)} datapoints.\n')
 
     # Training parameters that stay constant
