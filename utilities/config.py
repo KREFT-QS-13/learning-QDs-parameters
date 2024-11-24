@@ -2,7 +2,11 @@ import os
 import torch
 
 # PATH_0 = "./datasets/"
-PATH_0 = "./ALICE/"
+# PATH_0 = "./ALICE/"
+PATH_0 = "./"
+
+PATH_TO_DATASETS = "datasets/"
+PATH_TO_RESULTS = "Results/"
 
 DPI = 100
 RESOLUTION = 96 #96 256
@@ -27,10 +31,10 @@ def get_path(K, N, S):
     """Get the path based on configuration."""
     if S > 0:  # Replaces NOISE check
         if not system_name or system_name.isspace():  # Check if empty or whitespace
-            return os.path.join(PATH_0, f'N-{N}_S-{S}', f'{RESOLUTION}x{RESOLUTION}')
-        return os.path.join(PATH_0, f'{system_name}-N-{N}_S-{S}', f'{RESOLUTION}x{RESOLUTION}')    
+            return os.path.join(PATH_0, PATH_TO_DATASETS, f'N-{N}_S-{S}', f'{RESOLUTION}x{RESOLUTION}')
+        return os.path.join(PATH_0, PATH_TO_DATASETS, f'{system_name}-N-{N}_S-{S}', f'{RESOLUTION}x{RESOLUTION}')    
     else:
-        return os.path.join(PATH_0, f'K-{K}', f'{RESOLUTION}x{RESOLUTION}')
+        return os.path.join(PATH_0, PATH_TO_DATASETS, f'K-{K}', f'{RESOLUTION}x{RESOLUTION}')
 
 def validate_state(K, N, S):
     """Validate the configuration state."""

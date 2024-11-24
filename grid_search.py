@@ -2,6 +2,7 @@ import sys
 import argparse
 import os
 import itertools
+import time
 import numpy as np
 from datetime import datetime
 
@@ -10,16 +11,16 @@ import utilities.config as c
 import utilities.model_utils as mu
 from models.transfer_CNN import ResNet
 
-def grid_search(config_tuple:tuple, datasize_cut:int=35000):
+def grid_search(config_tuple:tuple, datasize_cut:int=35000, save_dir:str='Results'):
     """
     Perform grid search for ResNet hyperparameters.
     """
     K, N, S = config_tuple
     # For testing
     # param_grid = {
-    #     'batch_size': [32],
+    #     'batch_size': [64],
     #     'learning_rate': [0.01],
-    #     'base_model': ['resnet18', 'resnet34'],
+    #     'base_model': ['resnet18'],
     #     'dropout': [0.7],
     #     'custom_head': [
     #         [1024, 512], 
@@ -28,23 +29,24 @@ def grid_search(config_tuple:tuple, datasize_cut:int=35000):
     
     # Define parameter grids
     param_grid = {
-        'batch_size': [16, 32, 64, 128, 256, 512], # 6
-        'learning_rate': [0.0001, 0.0005, 0.001, 0.005, 0.01], # 5
-        'base_model': ['resnet18', 'resnet34'], # 2
-        'dropout': [0.0, 0.1, 0.3, 0.5, 0.7], # 5
+        'base_model': ['resnet18'], # 1
+        'batch_size': [64, 128, 256, 512], # 4
+        'learning_rate': [0.0001, 0.0005, 0.001, 0.005], # 4
+        'dropout': [0.0, 0.25, 0.5], # 3
         'custom_head': [
             [2048, 1024],
-            [4096, 2048],
-            [1024, 512], 
-            [2048, 1024, 512], 
-            [4096, 1024, 256],
-        ] # 5
+            [4096, 512],
+            [2048, 512, 128],
+        ] # 3
     }
 
     # Load data
+    start_time = time.time()
     print("Loading and preparing datasets...")
     X, y = mu.prepare_data(config_tuple, datasize_cut=datasize_cut)
     print(f'Successfully prepared {len(X)} datapoints.\n')
+    end_time = time.time()
+    print(f"Time taken to prepare data: {end_time - start_time:.2f} seconds")
 
     # Training parameters that stay constant
     base_train_params = {
@@ -66,8 +68,9 @@ def grid_search(config_tuple:tuple, datasize_cut:int=35000):
     param_values = list(param_grid.values())
     total_combinations = np.prod([len(v) for v in param_values])
     
+    start_time = time.time()
     print(f"Starting grid search with {total_combinations} combinations...")
-    
+    print(f"Device: {c.DEVICE}")
     for i, values in enumerate(itertools.product(*param_values)):
         current_params = dict(zip(param_names, values))
         print(f"\nTesting combination {i+1}/{total_combinations}:")
@@ -95,7 +98,7 @@ def grid_search(config_tuple:tuple, datasize_cut:int=35000):
         
         # Train and evaluate model
         try:
-            results = mu.train_evaluate_and_save_models([model_config], X, y, train_params)
+            results = mu.train_evaluate_and_save_models([model_config], X, y, train_params, save_dir=save_dir)
             
             # Get validation MSE from the results
             val_mse = min(results[0]['history']['val_mse'])
@@ -116,7 +119,7 @@ def grid_search(config_tuple:tuple, datasize_cut:int=35000):
         except Exception as e:
             print(f"Error with configuration {current_params}: {e}")
             continue
-    
+    end_time = time.time()
     # Print final results
     print("\n" + "="*50)
     print("Grid Search Results")
@@ -126,15 +129,19 @@ def grid_search(config_tuple:tuple, datasize_cut:int=35000):
     for param, value in best_config.items():
         print(f"{param}: {value}")
     print(f"\nBest model saved at: {best_model_path}")
+    print(f"Time taken to perform grid search: {end_time - start_time:.2f} seconds ({(end_time - start_time)/3600:.2f} hours).")
+    print(f"Time taken to perform grid search per configuration: {(end_time - start_time)/total_combinations:.2f} seconds.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Grid search for ResNet hyperparameters.")
+    parser.add_argument('--save_dir', type=str, default='Results', help="Directory to save the results.")
     parser.add_argument('-K', type=int, default=2, help="The number of all quanutum dots in the system (including sensors).")
     parser.add_argument('-S', type=int, default=0, help="Number of sensors in the system.")
 
     args = parser.parse_args()
     K = args.K
     S = args.S
+    save_dir = args.save_dir
     config_tuple = (K, K-S, S) # (K, N, S)
 
-    grid_search(config_tuple)
+    grid_search(config_tuple, save_dir=save_dir)

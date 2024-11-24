@@ -437,20 +437,11 @@ def collect_performance_metrics(model, test_loader):
     }
     return metrics
 
-def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir='Results'):
-    """
-    Train, evaluate, and save multiple models based on the given configurations.
+def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir=None):
+    """Train, evaluate, and save multiple models based on the given configurations."""
+    if save_dir is None:
+        save_dir = os.path.join(c.PATH_0, c.PATH_TO_RESULTS)
     
-    Args:
-        model_configs (list): List of model configurations.
-        X (np.array): Input data.
-        y (np.array): Target data.
-        train_params (dict): Parameters for training.
-        save_dir (str): Directory to save results.
-    
-    Returns:
-        list: Results including model, history, and evaluation metrics for each model.
-    """
     results = []
     for config in model_configs:
         model = config['model'](**config['params'])
@@ -523,7 +514,7 @@ def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir='
         
         results.append(result)
         
-        save_results_to_csv([result])
+        save_results_to_csv([result], filename=os.path.join(save_dir, 'model_results.csv'))
         
         save_results_and_history(result, history, predictions, model_save_dir)
         save_model(trained_model, model_save_dir, model_name)
