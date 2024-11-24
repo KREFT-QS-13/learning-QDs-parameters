@@ -575,13 +575,15 @@ def plot_learning_curves(history, result, save_dir):
     plt.savefig(os.path.join(save_dir, 'learning_curves.png'))
     plt.close()
 
-def plot_l2_norm_polar(targets, outputs, save_dir, epsilon, num_groups=6, num_points=None):
+# TODO: Add save_outliers
+def plot_l2_norm_polar(targets, outputs, save_dir, epsilon, num_groups=6, num_points=None, save_outliers=True):
     """
     Create two plots in polar coordinates with points as distances between
     the origin and the L2 norm of the difference of targets and outputs.
     The first plot will have concentric circles at integer radii and no angle labels.
     Colors and shapes represent distance groups from the origin based on epsilon.
     The second plot will have the intrested 5 groups.
+    Optionally save outliers to HDF5 file.
 
     Args:
         targets (np.array): The true values.
