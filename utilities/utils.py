@@ -151,7 +151,7 @@ def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], m
     
     # mag_conts = np.random.choice(c.mag_list, size=K)
     mag_const = np.random.choice(c.mag_list)
-    mag_consts = np.random.normal(loc=mag_const, scale=1.25, size=K)
+    mag_consts = np.random.normal(loc=mag_const, scale=0.5, size=K)
     
     C_dd_prime, C_dg = np.identity(K), np.identity(K)
     C_dd_prime[np.eye(C_dd_prime.shape[0], dtype=bool)] = [round(np.random.normal(c*mean, c*std), 4) for c in mag_consts]
@@ -219,13 +219,13 @@ def get_cut(config_tuple):
     """Generate a 2d cut constructed from standard basis vectors."""
     K, N, S = config_tuple
         
-    cut = np.zeros((2, K))
+    cut = np.zeros((2, K), dtype=int)
     indices = np.random.choice(np.arange(N), 2, replace=False)
     cut[tuple(zip(*enumerate(indices)))] = 1
     return cut[np.argmax(cut, axis=1).argsort()]
 
 def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesks: list[np.ndarray], 
-             only_edges:bool=True, only_labels:bool=True, res:int=RESOLUTION, dpi:int=DPI):
+             only_edges:bool=True, only_labels:bool=False, res:int=RESOLUTION, dpi:int=DPI):
     """
         Plot the charge stability diagram (CSD) (res by res, default 256 by 256).
     """
@@ -295,17 +295,17 @@ def generate_experiment_config(C_DD:np.ndarray, C_DG:np.ndarray, config_tuple:tu
     }
 
     sensor_config = {
-        "sensor_dot_indices": [-1],  #Indices of the sensor dots
-        "sensor_detunings": [-0.02],  #Detuning of the sensor dots , -0.02
+        "sensor_dot_indices": [4,5], #TODO: Fix it -np.arange(1,S+1),  #Indices of the sensor dots
+        "sensor_detunings": [0.0005]*2,  #Detuning of the sensor dots , -0.02
         "noise_amplitude": {"fast_noise":c.fast_noise_amplitude, "slow_noise": c.slow_noise_amplitude}, #Noise amplitude for the sensor dots in eV
-        "peak_width_multiplier": 25,  #Width of the sensor peaks in the units of thermal broadening m *kB*T/0.61.
+        "peak_width_multiplier": 30, #40 , 25  #Width of the sensor peaks in the units of thermal broadening m *kB*T/0.61.
     }
 
 
     return capacitance_config, tunneling_config, sensor_config
 
 def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.ndarray=None, 
-                     config_tuple:tuple[int,int,int]=None, sensors_radius:list[float]=None, sensors_angle:list[float]=None):
+                     config_tuple:tuple[int,int,int]=None, sensors_radius:list[float]=None, sensors_angle:list[float]=None, cut:np.ndarray=None):
     """
         Run the QDarts experiment.
     """
@@ -319,16 +319,28 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
         raise ValueError("Device must be provided when using sensors (S > 0)")
         
     try:
-        C_DD, C_DG, sensors = generate_capacitance_matrices(config_tuple, device, sensors_radius, sensors_angle)
+        C_DD, C_DG, sensors_coordinates = generate_capacitance_matrices(config_tuple, device, sensors_radius, sensors_angle)
         
-        try:
-            cut = get_cut(config_tuple)
-        except ValueError as e:
-            print(f"Error generating cut: {e}")
-            return None
+        if cut is None:
+            try:
+                cut = get_cut(config_tuple)
+            except ValueError as e:
+                print(f"Error generating cut: {e}")
+                return None
             
         use_sensor_signal = S > 0
         
+
+        # target_state, target_transition = 1+np.zeros(K, dtype=int), np.zeros(K, dtype=int)
+        # target_state[0], target_state[-S:] = 1, 5
+        # target_transition[0], target_transition[1] = 1, -1
+        # target_transition[2], target_transition[3] = 1, -1
+
+        target_state =  np.zeros(K, dtype=int)+1
+        target_state[-S:] = 5
+        target_transition = cut[0]-cut[1]
+        print(f"Cut: {cut}, State: {target_state}, Transition: {target_transition}")
+
         try:
             if S == 0:  # Replace NOISE check
                 capacitance_config, _, _ = generate_experiment_config(C_DD, C_DG, config_tuple, device)
@@ -338,7 +350,7 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
                 x_voltages=x_vol,  # V
                 y_voltages=y_vol,  # V
                 plane_axes=cut,
-                compute_polytopes=True
+                # compute_polytopes=True
             )
             else:
                 # capacitance_config, tunneling_config, sensor_config = generate_experiment_config(C_DD, C_DG, config_tuple, device)
@@ -349,10 +361,10 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
                     y_voltages=y_vol,  # V
                     
                     #TODO: depending on the size of the system change the target state/transition accordingly
-                    target_state = [1,0,5],  # target state for transition
-                    target_transition = [-1,1,0], #target transition from target state, here transition to [2,3,2,3,5,5]
+                    target_state = target_state,  # target state for transition
+                    target_transition = target_transition, #target transition from target state, here transition to [2,3,2,3,5,5]
                     
-                    # compensate_sensors=True,
+                    compensate_sensors=True,
 
                     plane_axes=cut,
                     compute_polytopes=True,
@@ -366,9 +378,9 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
             xks, yks, csd_dataks, polytopesks, sensor, _ = result
             
             if S > 0: 
-                return C_DD, C_DG, ks, cut, xks, yks, csd_dataks, polytopesks, sensor[:,:,0], device, sensors
+                return C_DD, C_DG, ks, cut, xks, yks, csd_dataks, polytopesks, sensor, device, sensors_coordinates
             else:
-                return C_DD, C_DG, ks, cut, xks, yks, csd_dataks, polytopesks, None, device, sensors
+                return C_DD, C_DG, ks, cut, xks, yks, csd_dataks, polytopesks, None, device, sensors_coordinates
             
         except Exception as e:
             print(f"Error in experiment generation: {e}")
@@ -561,7 +573,8 @@ def load_csd_img(batch_num: int, csd_name: str, config_tuple: tuple[int, int, in
     return img 
 
 def reconstruct_img_from_tensor(tensor:np.ndarray):
-    return Image.fromarray((tensor.transpose(1, 2, 0)))
+    return Image.fromarray((tensor.transpose(1, 2, 0) * 255).astype(np.uint8))
+    # return Image.fromarray((tensor.transpose(1, 2, 0)))
 
 def reconstruct_img_with_matrices(batch_num: int, img_name: str, config_tuple: tuple[int, int, int], show: bool=False):
     """
@@ -569,6 +582,7 @@ def reconstruct_img_with_matrices(batch_num: int, img_name: str, config_tuple: t
     """
     img_name = check_and_correct_img_name(img_name)
     path = get_path_hfd5(batch_num, config_tuple)
+    print(f"The file path: {path}")
 
     with h5py.File(path, 'r') as f:
         img = f[img_name]['csd'][:]

@@ -402,6 +402,8 @@ class Experiment(): #TODO: change name to the simulator name
                                                        target_state)
             V_offset_polytopes = [np.dot(v_offset,plane_axes[0]), np.dot(v_offset,plane_axes[1])]
             polytopes = get_polytopes(states, backend, minV, maxV,   V_offset_polytopes)
-        return xout, yout, CSD_data.T, polytopes, sensor_values, v_offset
-        
+            
+            return xout, yout, CSD_data.T, polytopes, sensor_values, v_offset
+        else:
+            return xout, yout, None, None, sensor_values, v_offset
         

@@ -4,7 +4,7 @@ from torchvision import models
 import utilities.config as c
 
 class ResNet(nn.Module):
-    def __init__(self, K, name="transfer_model", base_model='resnet18', pretrained=True, 
+    def __init__(self, config_tuple, name="transfer_model", base_model='resnet18', pretrained=True, 
                  dropout:float=None, custom_head:list=None):
         super(ResNet, self).__init__()
         self.name = name
@@ -16,6 +16,7 @@ class ResNet(nn.Module):
         num_features = self.base_model.fc.in_features
         self.base_model.fc = nn.Identity()  # Remove the last fully connected layer
         
+        K, N, S = config_tuple
         if c.MODE == 1:
             output_size = K * (K + 1) // 2 + K**2
         elif c.MODE == 2:
@@ -63,6 +64,10 @@ class ResNet(nn.Module):
         elif model_name == 'resnet50':
             weights = models.ResNet50_Weights.IMAGENET1K_V1 if pretrained else None
             return models.resnet50(weights=weights)
+        elif 'resnet' in model_name:
+            num_layers = int(model_name.split('resnet')[-1])
+            print(f"Using custom ResNet with {num_layers} layers. No pretrained weights used in the model.")
+            return
         else:
             raise ValueError(f"Unsupported base model: {model_name}")
     
@@ -73,3 +78,7 @@ class ResNet(nn.Module):
 
     def __str__(self):
         return self.name
+
+
+class CustomResNet(nn.Module):
+    pass

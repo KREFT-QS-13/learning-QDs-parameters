@@ -98,18 +98,33 @@ def filter_dataset(dps:list):
     
     return filtered_dps
 
-def preprocess_csd(csd_array:np.ndarray):
-    # Check if the input
+def preprocess_csd(csd_array: np.ndarray, input_type: str = 'csd'):
+    """
+    Preprocess CSD or gradient array for model input.
+    
+    Args:
+        csd_array (np.ndarray): Input array of shape (4,RESOLUTION,RESOLUTION) or (1,RESOLUTION,RESOLUTION)
+        input_type (str): Type of input - 'csd' or 'gradient'
+    
+    Returns:
+        torch.Tensor: Preprocessed tensor of shape (1, RESOLUTION, RESOLUTION)
+    """
+    # Check input
     if not isinstance(csd_array, np.ndarray):
-        raise TypeError(f"Input must be a numpy.ndarray, {type(csd_array)}.")
-    elif csd_array.shape != (4,c.RESOLUTION,c.RESOLUTION):
-        raise TypeError(f"CSD image must be of a shape 4x{c.RESOLUTION}x{c.RESOLUTION}")
+        raise TypeError(f"Input must be a numpy.ndarray, got {type(csd_array)}")
+    
+    # Handle different input shapes
+    if len(csd_array.shape) == 3:  # (C, H, W)
+        if csd_array.shape[0] == 4:  # RGBA
+            csd_array = np.transpose(csd_array, (1, 2, 0))
+            csd_array = csd_array[:, :, :3]  # Keep only RGB
+        elif csd_array.shape[0] == 1:  # Already single channel
+            return torch.FloatTensor(csd_array)
+    elif len(csd_array.shape) == 2:  # (H, W)
+        csd_array = csd_array[None, :, :]  # Add channel dimension
+        return torch.FloatTensor(csd_array)
 
-    csd_array = np.transpose(csd_array, (1, 2, 0))
-    if csd_array.shape[2] == 4:
-        csd_array = csd_array[:, :, :3]  # Keep only the RGB channels
-
-    # Convert the NumPy array to a PyTorch tensor
+    # Convert to tensor and normalize
     transform = transforms.Compose([
         transforms.ToPILImage(),  # Convert NumPy array to PIL Image
         transforms.Grayscale(num_output_channels=1),  # Convert to grayscale with a single channel
@@ -117,10 +132,7 @@ def preprocess_csd(csd_array:np.ndarray):
         transforms.Normalize(mean=[0.5], std=[0.5])  # Normalize to [-1, 1]
     ])
     
-    # Apply the transformation
-    csd_tensor = transform(csd_array)
-
-    return csd_tensor
+    return transform(csd_array)
 
 def preprocess_capacitance_matrices(c_dd:np.ndarray, c_dg:np.ndarray):
     K = c_dd.shape[0]
