@@ -146,7 +146,9 @@ def preprocess_capacitance_matrices(c_dd:np.ndarray, c_dg:np.ndarray):
     else:
         raise ValueError(f"Mode must be 1 (all params), 2(both diags), 3(diag C_DD), {c.MODE} is not a valid mode.")
 
-def reconstruct_capacitance_matrices(output:np.ndarray, K:int):
+def reconstruct_capacitance_matrices(config_tuple, output:np.ndarray):
+    K, _, _ = config_tuple
+
     if c.MODE == 1:
         c_dd = np.zeros((K, K))
         c_dd[np.triu_indices(n=K)] = output[:K*(K+1)//2]
@@ -266,8 +268,90 @@ def divide_dataset(X, y, batch_size, val_split, test_split, random_state):
 
     return train_loader, val_loader, test_loader
 
-def train_model(model, X, y, batch_size=32, epochs=100, learning_rate=0.001, val_split=0.2, 
-                test_split=0.1, random_state=42, epsilon=1.0, init_weights=None):
+def physics_informed_regularization_torch(config_tuple, outputs, targets, reduction='mean'):
+    """
+    PyTorch version of physics-informed regularization that works with batches and enables autograd.
+    
+    Args:
+        config_tuple: Configuration tuple containing (K, R, S) values
+        outputs: Predicted values tensor from the model (batch_size, output_dim)
+        targets: Target values tensor (batch_size, output_dim)
+        
+    Returns:
+        Regularization loss tensor
+    """
+    _, _, S = config_tuple
+    if S == 0:
+        return torch.tensor(0.0, device=outputs.device, dtype=outputs.dtype)
+
+    K = config_tuple[0]
+    batch_size = outputs.shape[0]
+    
+    # Reconstruct C_DD and C_DG matrices for both outputs and targets
+    c_dd_hat = torch.zeros((batch_size, K, K), device=outputs.device, dtype=outputs.dtype)
+    c_dd_hat[:, torch.triu_indices(K, K)[0], torch.triu_indices(K, K)[1]] = outputs[:, :K*(K+1)//2]
+    c_dd_hat = c_dd_hat + torch.triu(c_dd_hat, 1).transpose(-2, -1)
+    
+    c_dg_hat = outputs[:, K*(K+1)//2:].reshape(batch_size, K, K)
+    
+    # Same for targets
+    c_dd = torch.zeros((batch_size, K, K), device=targets.device, dtype=targets.dtype)
+    c_dd[:, torch.triu_indices(K, K)[0], torch.triu_indices(K, K)[1]] = targets[:, :K*(K+1)//2]
+    c_dd = c_dd + torch.triu(c_dd, 1).transpose(-2, -1)
+    
+    c_dg = targets[:, K*(K+1)//2:].reshape(batch_size, K, K)
+    
+    # Calculate true self capacitances
+    true_self_capacitances = (torch.diagonal(c_dd, dim1=1, dim2=2) - 
+                             torch.sum(c_dg, dim=2) - 
+                             (torch.sum(c_dd, dim=2) - torch.diagonal(c_dd, dim1=1, dim2=2)))
+    
+    # Calculate regularization expression
+    reg_expression = (torch.diagonal(c_dd_hat, dim1=1, dim2=2) - 
+                     true_self_capacitances - 
+                     torch.sum(c_dg_hat, dim=2) - 
+                     (torch.sum(c_dd_hat, dim=2) - torch.diagonal(c_dd_hat, dim1=1, dim2=2)))
+    
+    if reduction == 'mean':
+        return torch.mean(torch.norm(reg_expression, dim=1)**2)
+    else:
+        return torch.norm(reg_expression, dim=1)**2
+
+def calculate_loss(config_tuple, criterion, regularization_coeff, outputs, targets, reduction='mean'):
+    loss = criterion(outputs, targets)
+    if regularization_coeff > 0:
+        physics_informed_loss = physics_informed_regularization_torch(config_tuple, outputs, targets, reduction=reduction)
+        loss += regularization_coeff * physics_informed_loss
+    return loss
+
+# def physics_informed_regularization(config_tuple, output, target):
+#     # output = output.detach().cpu().numpy()
+#     # target = target.detach().cpu().numpy()
+
+#     # print(f"output: {type(output)}, {output.shape}, target: {type(target)}, {target.shape}")
+
+#     _, _, S = config_tuple
+#     if S==0:
+#         print("S=0 is not a valid mode for physics-informed regularization.")
+#         return 0
+
+#     output_matrices = reconstruct_capacitance_matrices(config_tuple, output)
+#     target_matrices = reconstruct_capacitance_matrices(config_tuple, target)
+
+#     c_dd_hat, c_dg_hat = output_matrices
+#     c_dd, c_dg = target_matrices
+
+#     true_self_capacitances = np.diag(c_dd) - np.sum(c_dg, axis=1) - (np.sum(c_dd, axis=1) - np.diag(c_dd)) 
+#     sum_preds_c_dg = np.sum(c_dg_hat, axis=1) # sum over rows in dot-gate for given dot
+#     sum_preds_c_dd = (np.sum(c_dd_hat, axis=1) - np.diag(c_dd_hat))  # aka c_m
+
+#     reg_expression = np.diag(c_dd_hat) - true_self_capacitances - sum_preds_c_dg - sum_preds_c_dd
+
+#     return np.linalg.norm(reg_expression)**2
+
+def train_model(config_tuple, model, X, y, batch_size=32, epochs=100, learning_rate=0.001, val_split=0.2, 
+                test_split=0.1, random_state=42, epsilon=1.0, init_weights=None, 
+                criterion=nn.MSELoss(), regularization_coeff=0.0):
     '''
         Train a model on the given data and hyperparameters.
     '''
@@ -279,7 +363,6 @@ def train_model(model, X, y, batch_size=32, epochs=100, learning_rate=0.001, val
     train_loader, val_loader, test_loader = divide_dataset(X, y, batch_size, val_split, test_split, random_state)
 
     # Define loss function and optimizer
-    criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     history = {
@@ -321,14 +404,14 @@ def train_model(model, X, y, batch_size=32, epochs=100, learning_rate=0.001, val
         for inputs, targets in tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}"):
             optimizer.zero_grad()
             outputs = model(inputs)
-            loss = criterion(outputs, targets)
+            loss = calculate_loss(config_tuple, criterion, regularization_coeff, outputs, targets)
             loss.backward()
             optimizer.step()
             
             train_loss += loss.item()
 
             predicted_values = outputs.detach().cpu().numpy()
-            true_values = targets.cpu().numpy()
+            true_values = targets.detach().cpu().numpy()
 
             correct = np.isclose(predicted_values, true_values, atol=epsilon)
             if vec_local_correct_predictions is None:
@@ -360,7 +443,7 @@ def train_model(model, X, y, batch_size=32, epochs=100, learning_rate=0.001, val
         history['train_mse'].append(train_mse)
 
         # Validation step:
-        val_loss, global_val_accuracy, local_val_accuracy, val_mse, _, val_vec_local_acc = evaluate_model(model, val_loader, criterion, epsilon)
+        val_loss, global_val_accuracy, local_val_accuracy, val_mse, _, val_vec_local_acc = evaluate_model(config_tuple, model, val_loader, criterion, epsilon, regularization_coeff)
         history['val_losses'].append(val_loss)
         history['val_accuracies'].append([global_val_accuracy, local_val_accuracy])
         history['vec_local_val_accuracy'].append(val_vec_local_acc)
@@ -375,7 +458,7 @@ def train_model(model, X, y, batch_size=32, epochs=100, learning_rate=0.001, val
 
     return model, history, test_loader
 
-def evaluate_model(model, dataloader, criterion=nn.MSELoss(), epsilon=1.0):
+def evaluate_model(config_tuple, model, dataloader, criterion=nn.MSELoss(), epsilon=1.0,  regularization_coeff=0.0):
     model.eval()
 
     global_correct_predictions = 0
@@ -390,7 +473,7 @@ def evaluate_model(model, dataloader, criterion=nn.MSELoss(), epsilon=1.0):
     with torch.no_grad():
         for inputs, targets in dataloader:
             outputs = model(inputs)
-            loss = criterion(outputs, targets)
+            loss = calculate_loss(config_tuple, criterion, regularization_coeff, outputs, targets)
             total_loss += loss.item()
             
             predicted_values = outputs.cpu().numpy()
@@ -449,7 +532,7 @@ def collect_performance_metrics(model, test_loader):
     }
     return metrics
 
-def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir=None):
+def train_evaluate_and_save_models(config_tuple, model_configs, X, y, train_params, save_dir=None):
     """Train, evaluate, and save multiple models based on the given configurations."""
     if save_dir is None:
         save_dir = os.path.join(c.PATH_0, c.PATH_TO_RESULTS)
@@ -467,15 +550,26 @@ def train_evaluate_and_save_models(model_configs, X, y, train_params, save_dir=N
         
         # Load initial weights if specified
         if train_params.get('init_weights'):
-            init_weights_path = train_params['init_weights']
+            init_weights_path = os.path.normpath(train_params['init_weights']).replace('\\', '/')
             if os.path.exists(init_weights_path):
                 model = load_model_weights(model, init_weights_path)
                 print(f"Loaded initial weights from {init_weights_path}")
             else:
                 print(f"Warning: Initial weights file not found at {init_weights_path}. Starting with random weights.")
+                print(f"Current working directory: {os.getcwd()}")
+
+                train_params['init_weights'] = None
         
+
+        # Model's parameters
+        print("\n\n--------- START TRAINING ---------")
+        print(f"Model: {model_name}")
+        num_params = sum(p.numel() for p in model.parameters())
+        num_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Number of model's parameters: {num_params}, Number of trainable parameters: {num_trainable_params}")
+
         # Train the model
-        trained_model, history, test_loader = train_model(model, X, y, **train_params)
+        trained_model, history, test_loader = train_model(config_tuple, model, X, y, **train_params)
         
         # Evaluate the model
         test_loss, global_test_accuracy, local_test_accuracy, test_mse, predictions, vec_local_test_accuracy = evaluate_model(trained_model, test_loader, epsilon=train_params.get('epsilon', 1.0))
@@ -743,11 +837,7 @@ def load_model_weights(model, path):
     Returns:
         torch.nn.Module: The model with loaded weights.
     """
-    if os.path.exists(path):
-        model.load_state_dict(torch.load(path, weights_only=True))
-        print(f"Model weights loaded from {path}")
-    else:
-        print(f"No weights file found at {path}")
+    model.load_state_dict(torch.load(path, weights_only=True))
     return model
 
 def save_results_to_csv(results, filename='Results/model_results.csv'):
@@ -789,6 +879,8 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
             'batch_size':  train_params.get('batch_size', 'N/A'),
             'epochs':  train_params.get('epochs', 'N/A'),
             'learning_rate':  train_params.get('learning_rate', 'N/A'),
+            'regularization_coeff': train_params.get('regularization_coeff', '0'),
+            'criterion': train_params.get('criterion', 'nn.MSELoss()'),
             'epsilon': epsilon,
             'test_accuracy_global': result['global_test_accuracy'],
             'test_accuracy_local':result['local_test_accuracy'],
@@ -811,7 +903,7 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
 
 
 # ----------------------------- EVALUATION
-def explain_output(model_path, input_tensor):
+def explain_output(config_tuple, model_path, input_tensor):
     """
     Load a model and create explanatory visualizations (saliency map and Grad-CAM) for a given input.
     For regression, we'll visualize the gradients with respect to the mean of all outputs.
@@ -827,7 +919,7 @@ def explain_output(model_path, input_tensor):
             - prediction (numpy.ndarray): Model's output prediction
             - reconstructed_matrices (tuple): (C_DD, C_DG) reconstructed matrices
     """
-    K = input_tensor.shape[0]
+    K, N, S = config_tuple
     # Ensure input is on the correct device
     input_tensor = input_tensor.to(c.DEVICE)
     
@@ -874,7 +966,7 @@ def explain_output(model_path, input_tensor):
     gradcam_overlay = overlay_heatmap_on_image(input_image, gradcam, alpha=0.7)
     
     # Reconstruct C_DD and C_DG matrices from prediction
-    reconstructed_matrices = reconstruct_capacitance_matrices(prediction, K)
+    reconstructed_matrices = reconstruct_capacitance_matrices(config_tuple, prediction)
     
     return saliency_overlay, gradcam_overlay, prediction, reconstructed_matrices
 

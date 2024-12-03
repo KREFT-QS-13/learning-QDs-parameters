@@ -203,7 +203,7 @@ def generate_capacitance_matrices(config_tuple:tuple[int, int, int]=None, device
 
         C_DD, C_DG = exp_decay_model(dist_matrix, config_tuple, mean, std)
         
-        C_DD = C_DD + np.sum(C_DG, axis=1).T*np.eye(K) + (np.sum(C_DD, axis=1)-np.diag(C_DD))*np.eye(K) 
+        C_DD = C_DD + np.sum(C_DG, axis=1)*np.eye(K) + (np.sum(C_DD, axis=1)-np.diag(C_DD))*np.eye(K) 
 
         return C_DD, C_DG, sensors
     else:
@@ -409,8 +409,8 @@ def count_directories_in_folder(config_tuple):
     K, N, S = config_tuple
     path = c.get_path(K, N, S)
     
-    # Ensure the path exists before trying to list directories
-    ensure_path(path)
+    # # Ensure the path exists before trying to list directories
+    # ensure_path(path)
     
     # Now safely list directories
     batch_list = [x for x in os.listdir(path) if re.compile(r"batch-\d").match(x)] 
