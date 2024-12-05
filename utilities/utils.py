@@ -164,12 +164,10 @@ def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], m
     C_dd_prime[np.eye(C_dd_prime.shape[0], dtype=bool)] = [round(np.random.normal(c*mean, c*std), 4) for c in mag_consts]
     C_dg[np.eye(C_dg.shape[0], dtype=bool)] = [round(np.random.normal(c*mean, c*std), 4) for c in mag_consts]
 
-
     for i in range(K):
         for j in range(i+1, K):
             C_dd_prime[i,j] = C_dd_prime[j,i] = round(np.sqrt(C_dd_prime[i,i]*C_dd_prime[j,j]) * decay(dist_matrix[i,j]/c.d_DD, c.p_dd), 4)
             C_dg[i,j] = C_dg[j,i] = round(np.sqrt(C_dd_prime[i,i]*C_dd_prime[j,j])*decay(dist_matrix[i,j]/c.d_DG, c.p_dg), 4)
-
 
     return C_dd_prime, C_dg
 
@@ -703,7 +701,7 @@ def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot, 
     K, N, S = config_tuple
    
     # save img of CSD 
-    fpi, img_name = save_img_csd(config_tuple, csd_plot, cut)
+    fpi, img_name = save_img_csd(config_tuple, csd_plot, cuts)
    
     # save datapoints
     csd = Image.open(fpi)

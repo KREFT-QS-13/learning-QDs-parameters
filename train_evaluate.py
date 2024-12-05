@@ -42,9 +42,13 @@ def main():
     print("Loading and preparing datasets...")
     
     datasize_cut = 50000
-    X, y = mu.prepare_data(config_tuple, datasize_cut=datasize_cut, param_names=['csd', 'C_DD', 'C_DG'])
+    # for training with csd images:
+    # X, y = mu.prepare_data(config_tuple, datasize_cut=datasize_cut, param_names=['csd', 'C_DD', 'C_DG'])
     
-    # for testing:
+    # for training with csd gradients:
+    X, y = mu.prepare_data(config_tuple, datasize_cut=datasize_cut, param_names=['csd_gradient', 'C_DD', 'C_DG'])
+
+    # for testing with csd images:
     # X, y = mu.prepare_data(config_tuple, all_batches=False, batches=np.arange(1,11))
    
     print(f'Successfully prepared {len(X)} datapoints with input size {c.RESOLUTION}x{c.RESOLUTION}.\n')
@@ -74,30 +78,30 @@ def main():
         #         'filters_per_layer': [16, 32, 64, 128],
         #     }
         # },
-        {
-            'model': ResNet, 
-            'params': {
-                'config_tuple': config_tuple,
-                'name': 'resnet10_model',
-                'base_model': 'resnet10',
-                'pretrained': True,
-                'dropout': 0.2,
-                'custom_head': [2048, 1024],
-                'filters_per_layer': [16, 32, 64, 128],
-            }
-        },
         # {
         #     'model': ResNet, 
         #     'params': {
         #         'config_tuple': config_tuple,
-        #         'name': 'resnet18_model',
-        #         'base_model': 'resnet18',
+        #         'name': 'resnet10_model',
+        #         'base_model': 'resnet10',
         #         'pretrained': True,
-        #         'dropout': 0.25,
+        #         'dropout': 0.2,
         #         'custom_head': [2048, 1024],
-        #         'filters_per_layer': None,
+        #         'filters_per_layer': [16, 32, 64, 128],
         #     }
         # },
+        {
+            'model': ResNet, 
+            'params': {
+                'config_tuple': config_tuple,
+                'name': 'resnet18_model',
+                'base_model': 'resnet18',
+                'pretrained': True,
+                'dropout': 0.25,
+                'custom_head': [2048, 1024],
+                'filters_per_layer': None,
+            }
+        },
         # {
         #     'model': CustomCNN, 
         #     'params': {

@@ -17,6 +17,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from tqdm import tqdm
 
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
 import utilities.config as c
 import utilities.utils as u
@@ -99,6 +100,23 @@ def filter_dataset(dps:list):
     
     return filtered_dps
 
+def convert_csd_gradient_to_csd_img(csd_gradient: np.ndarray):
+    fig, ax = plt.subplots(figsize=(c.RESOLUTION/c.DPI, c.RESOLUTION/c.DPI), dpi=c.DPI)
+    ax.pcolormesh(csd_gradient.squeeze())
+    plt.axis('off')
+    plt.tight_layout(pad=0)
+
+    canvas = FigureCanvas(fig)
+    canvas.draw()
+
+    # Convert the canvas to a NumPy array
+    image = np.frombuffer(canvas.buffer_rgba(), dtype='uint8')
+    image = image.reshape(canvas.get_width_height()[::-1] + (4,))
+
+    plt.close(fig)   
+
+    return image
+
 def preprocess_csd(csd_array: np.ndarray, input_type: str = 'csd'):
     """
     Preprocess CSD or gradient array for model input.
@@ -114,7 +132,10 @@ def preprocess_csd(csd_array: np.ndarray, input_type: str = 'csd'):
     if not isinstance(csd_array, np.ndarray):
         raise TypeError(f"Input must be a numpy.ndarray, got {type(csd_array)}")
     
-    # Handle different input shapes
+    # if input_type == 'csd_gradient':
+    #     csd_array = convert_csd_gradient_to_csd_img(csd_array)
+    
+    # Handle different input shapes    
     if len(csd_array.shape) == 3:  # (C, H, W)
         if csd_array.shape[0] == 4:  # RGBA
             csd_array = np.transpose(csd_array, (1, 2, 0))
@@ -124,7 +145,7 @@ def preprocess_csd(csd_array: np.ndarray, input_type: str = 'csd'):
     elif len(csd_array.shape) == 2:  # (H, W)
         csd_array = csd_array[None, :, :]  # Add channel dimension
         return torch.FloatTensor(csd_array)
-
+    
     # Convert to tensor and normalize
     transform = transforms.Compose([
         transforms.ToPILImage(),  # Convert NumPy array to PIL Image
@@ -169,7 +190,7 @@ def reconstruct_capacitance_matrices(config_tuple, output:np.ndarray):
 
     return c_dd, c_dg   
 
-def preprocess_data(dps:list, filtered:bool=True):
+def preprocess_data(dps:list, filtered:bool=True, input_type:str='csd'):
     """
     Args:
         dps - the list of the loaded parameters' in a format of [['csd','C_DD', 'C_DG', any other ... ], [...], ... [...]]
@@ -184,15 +205,17 @@ def preprocess_data(dps:list, filtered:bool=True):
     dps = [x[:3] for x in dps]
     X, Y = list(), list()
 
+    print(f"Preprocessing data...")
     for x in dps:
-        X.append(preprocess_csd(x[0]))
+        X.append(preprocess_csd(x[0], input_type))
         Y.append(preprocess_capacitance_matrices(x[1], x[2]))
-
+    print(f"Data preprocessed.")
+    
     return np.array(X), np.array(Y)
 
 def prepare_data(config_tuple, param_names:list=['csd', 'C_DD', 'C_DG'], all_batches=True, batches:list=None, datasize_cut:int=None):
     datapoints = load_datapoints(config_tuple, param_names, all_batches, batches)
-    X, Y = preprocess_data(datapoints)
+    X, Y = preprocess_data(datapoints, input_type=param_names[0])
 
     if datasize_cut is not None and datasize_cut > len(X):
         print(f"Datasize is greater than the number of datapoints available ({len(X)}). Returning all datapoints.")
