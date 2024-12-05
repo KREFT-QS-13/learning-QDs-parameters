@@ -1,5 +1,6 @@
 import numpy as np
 import random
+from scipy.special import comb
 import matplotlib as mpl
 mpl.use('Agg')  # Use the 'Agg' backend which is thread-safe
 import matplotlib.pyplot as plt
@@ -84,7 +85,7 @@ def check_sensor_in_correct_region(r0:float, theta0:float, device:np.ndarray, r_
 
     return r_min < np.sqrt((s_x-x_c)**2 + (s_y-y_c)**2) <= r_max
 
-def draw_random(S:int, device:np.ndarray) -> list[float]:
+def draw_random(S:int, device:np.ndarray, const_sensor_r:bool) -> list[float]:
     """
         Draw random r0 for S sensors.
     """
@@ -96,20 +97,26 @@ def draw_random(S:int, device:np.ndarray) -> list[float]:
     list_theta0 = []
     while len(list_r0) < S:
         r0 = np.random.uniform(0, r_max)
-        theta0 = np.random.uniform(0, 2*np.pi)
+        theta0 = np.random.uniform(0, 2*np.pi) 
         if check_sensor_in_correct_region(r0, theta0, device, r_min=r_min):
             list_r0.append(r0)
             list_theta0.append(theta0)
 
-   
+    if const_sensor_r:
+       list_r0 = [list_r0[0]]*S
+
     return list_r0, list_theta0
 
-def set_sensors_positions(S:int, device:np.ndarray, list_r0:list[float]=None, list_theta0:list[float]=None) -> tuple[float, float]:
+def set_sensors_positions(S:int, device:np.ndarray, const_sensor_r=False, list_r0:list[float]=None, list_theta0:list[float]=None) -> tuple[float, float]:
     """
         Return the positions of the sensors in polar coordinates.
     """
     if list_r0 is None and list_theta0 is None:
-        list_r0, list_theta0 = draw_random(S, device)
+        list_r0, list_theta0 = draw_random(S, device, const_sensor_r)
+    elif list_r0 is None and list_theta0 is not None:
+        list_r0, _ = draw_random(S, device, const_sensor_r)
+    elif list_r0 is not None and list_theta0 is None:
+        _, list_theta0 = draw_random(S, device, const_sensor_r)
 
     return [(r0,t0)  for r0, t0 in zip(list_r0, list_theta0)]
 
@@ -151,7 +158,7 @@ def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], m
     
     # mag_conts = np.random.choice(c.mag_list, size=K)
     mag_const = np.random.choice(c.mag_list)
-    mag_consts = np.random.normal(loc=mag_const, scale=0.5, size=K)
+    mag_consts = np.abs(np.random.normal(loc=mag_const, scale=1, size=K))
     
     C_dd_prime, C_dg = np.identity(K), np.identity(K)
     C_dd_prime[np.eye(C_dd_prime.shape[0], dtype=bool)] = [round(np.random.normal(c*mean, c*std), 4) for c in mag_consts]
@@ -167,7 +174,7 @@ def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], m
     return C_dd_prime, C_dg
 
 
-def generate_capacitance_matrices(config_tuple:tuple[int, int, int]=None, device:np.ndarray=None,
+def generate_capacitance_matrices(config_tuple:tuple[int, int, int]=None, device:np.ndarray=None, const_sensor_r:bool=False,
                                   sensors_radius:list[float]=None, sensors_angle:list[float]=None) -> tuple[np.ndarray, np.ndarray]:
     """
         Generate random capacitance matrices for a given number of dots K from a normal distribution.
@@ -198,7 +205,7 @@ def generate_capacitance_matrices(config_tuple:tuple[int, int, int]=None, device
         C_DD = np.sum(C_DG, axis=1).T*np.eye(K) + C_m
         return C_DD, C_DG, None
     elif S>0 and device is not None:
-        sensors = set_sensors_positions(S, device, sensors_radius, sensors_angle)
+        sensors = set_sensors_positions(S, device, const_sensor_r, sensors_radius, sensors_angle)
         dist_matrix = get_device_distance_matrix(device, sensors, config_tuple)
 
         C_DD, C_DG = exp_decay_model(dist_matrix, config_tuple, mean, std)
@@ -224,23 +231,73 @@ def get_cut(config_tuple):
     cut[tuple(zip(*enumerate(indices)))] = 1
     return cut[np.argmax(cut, axis=1).argsort()]
 
+def get_all_euclidean_cuts(config_tuple):
+    K, N, _ = config_tuple  
+    num_of_cuts = int(comb(N,2))
+    cuts = np.zeros((num_of_cuts, 2, K), dtype=int)
+
+    k=0
+    for i in range(N):
+        for j in range(i+1,N):
+            cuts[k][0][i] = 1
+            cuts[k][1][j] = 1
+            k+=1
+
+    return cuts 
+
 def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesks: list[np.ndarray], 
-             only_edges:bool=True, only_labels:bool=False, res:int=RESOLUTION, dpi:int=DPI):
+             only_edges:bool=True, only_labels:bool=True, res:int=RESOLUTION, dpi:int=DPI):
     """
-        Plot the charge stability diagram (CSD) (res by res, default 256 by 256).
+    Plot the charge stability diagram (CSD).
+    
+    Args:
+        x (np.ndarray): x-axis values
+        y (np.ndarray): y-axis values
+        csd_or_sensor (np.ndarray): 2D or 3D array of CSD/sensor data
+        polytopesks (list[np.ndarray]): List of polytopes
+        only_edges (bool): Whether to plot only edges of polytopes
+        only_labels (bool): Whether to plot only labels
+        res (int): Resolution of the plot
+        dpi (int): DPI of the plot
+    
+    Returns:
+        tuple: (figure, axis) if 2D input
+               list of (figure, axis) if 3D input
     """
-    plt.figure(figsize=(res/dpi, res/dpi), dpi=dpi)
-    ax = plt.gca()
+    if len(csd_or_sensor.shape) == 3:
+        # Handle 3D array (multiple channels)
+        figures_and_axes = []
+        for channel in range(csd_or_sensor.shape[2]):
+            plt.figure(figsize=(res/dpi, res/dpi), dpi=dpi)
+            ax = plt.gca()
+            
+            ax.pcolormesh(1e3*x, 1e3*y, csd_or_sensor[:,:,channel])
+            plot_polytopes(ax, polytopesks, axes_rescale=1e3, 
+                         only_edges=only_edges, only_labels=only_labels)
+            
+            ax.set_xlim(x[0]*1e3, x[-1]*1e3)
+            ax.set_ylim(y[0]*1e3, y[-1]*1e3)
+            ax.axis('off')
+            plt.tight_layout(pad=0)
+            
+            figures_and_axes.append((plt.gcf(), ax))
+        
+        return figures_and_axes
+    else:
+        # Original behavior for 2D array
+        plt.figure(figsize=(res/dpi, res/dpi), dpi=dpi)
+        ax = plt.gca()
 
-    ax.pcolormesh(1e3*x, 1e3*y, csd_or_sensor) #plot the background
-    plot_polytopes(ax, polytopesks, axes_rescale=1e3, only_edges=only_edges, only_labels=only_labels) #plot the polytopes
+        ax.pcolormesh(1e3*x, 1e3*y, csd_or_sensor)
+        plot_polytopes(ax, polytopesks, axes_rescale=1e3, 
+                      only_edges=only_edges, only_labels=only_labels)
 
-    ax.set_xlim(x[0]*1e3, x[-1]*1e3)
-    ax.set_ylim(y[0]*1e3, y[-1]*1e3)
-    ax.axis('off')
-    plt.tight_layout(pad=0)
+        ax.set_xlim(x[0]*1e3, x[-1]*1e3)
+        ax.set_ylim(y[0]*1e3, y[-1]*1e3)
+        ax.axis('off')
+        plt.tight_layout(pad=0)
 
-    return plt.gcf(), ax
+        return plt.gcf(), ax
 
 def get_mask(device: np.ndarray, config_tuple: tuple[int, int, int]) -> np.ndarray:
     """
@@ -295,8 +352,8 @@ def generate_experiment_config(C_DD:np.ndarray, C_DG:np.ndarray, config_tuple:tu
     }
 
     sensor_config = {
-        "sensor_dot_indices": [4,5], #TODO: Fix it -np.arange(1,S+1),  #Indices of the sensor dots
-        "sensor_detunings": [0.0005]*2,  #Detuning of the sensor dots , -0.02
+        "sensor_dot_indices": np.arange(N,K).tolist(), #TODO: Fix it -np.arange(1,S+1),  #Indices of the sensor dots
+        "sensor_detunings": [0.0005]*S,  #Detuning of the sensor dots , -0.02
         "noise_amplitude": {"fast_noise":c.fast_noise_amplitude, "slow_noise": c.slow_noise_amplitude}, #Noise amplitude for the sensor dots in eV
         "peak_width_multiplier": 30, #40 , 25  #Width of the sensor peaks in the units of thermal broadening m *kB*T/0.61.
     }
@@ -305,7 +362,8 @@ def generate_experiment_config(C_DD:np.ndarray, C_DG:np.ndarray, config_tuple:tu
     return capacitance_config, tunneling_config, sensor_config
 
 def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.ndarray=None, 
-                     config_tuple:tuple[int,int,int]=None, sensors_radius:list[float]=None, sensors_angle:list[float]=None, cut:np.ndarray=None):
+                     config_tuple:tuple[int,int,int]=None, sensors_radius:list[float]=None, 
+                     sensors_angle:list[float]=None, const_sensor_r=False, cut:np.ndarray=None):
     """
         Run the QDarts experiment.
     """
@@ -319,7 +377,7 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
         raise ValueError("Device must be provided when using sensors (S > 0)")
         
     try:
-        C_DD, C_DG, sensors_coordinates = generate_capacitance_matrices(config_tuple, device, sensors_radius, sensors_angle)
+        C_DD, C_DG, sensors_coordinates = generate_capacitance_matrices(config_tuple, device, const_sensor_r, sensors_radius, sensors_angle)
         
         if cut is None:
             try:
@@ -364,7 +422,7 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
                     target_state = target_state,  # target state for transition
                     target_transition = target_transition, #target transition from target state, here transition to [2,3,2,3,5,5]
                     
-                    compensate_sensors=True,
+                    compensate_sensors=True if S==2 and N==4 else False,
 
                     plane_axes=cut,
                     compute_polytopes=True,
@@ -459,22 +517,57 @@ def clean_batch():
             print("Unable to clean empty batch folder!")
             print(f'{e}')
 
-def save_img_csd(config_tuple, csd_plot):
+def save_img_csd(config_tuple, csd_plot, cut):
     """
-    Save the CSD image as a PNG file with a 'unique' name.
+    Save the CSD image as a PNG file with a unique name.
+    
+    Args:
+        config_tuple (tuple): (K, N, S) configuration
+        csd_plot: Either a single figure or list of figures
+        cut (np.ndarray): Cut array used to generate the CSD
+    
+    Returns:
+        tuple: (path, name) for single figure or list of (path, name) for multiple figures
     """
     K, N, S = config_tuple
-    img_name = ''.join([str(random.randint(0, 9)) for _ in range(10)])+'.png'
-    full_path_img = os.path.join(PATH_IMG, img_name)
     
-    csd_plot.savefig(full_path_img, 
-                     format='png', 
-                     bbox_inches='tight', 
-                     pad_inches=0, 
-                     dpi=DPI)
+    # Generate base name
+    base_name = ''.join([str(random.randint(0, 9)) for _ in range(10)])
     
-    plt.close(csd_plot)
-    return full_path_img, img_name
+    # Add cut indices to name
+    indices = [np.argwhere(c == 1).squeeze().tolist() for c in cut]
+    cut_name = '_'+''.join(str(i) for i in indices)
+    
+    if len(csd_plot.shape) == 3:
+        # Handle multiple figures (S > 1)
+        saved_files = []
+        for sensor_idx, fig in enumerate(csd_plot):
+            # Create name with sensor index
+            img_name = f"{base_name}{cut_name}_s{sensor_idx}.png"
+            full_path_img = os.path.join(PATH_IMG, img_name)
+            
+            # Save figure
+            fig.savefig(full_path_img, 
+                       format='png', 
+                       bbox_inches='tight', 
+                       pad_inches=0, 
+                       dpi=DPI)
+            plt.close(fig)
+            saved_files.append((full_path_img, img_name))
+        return saved_files
+    else:
+        # Handle single figure (S = 0 or S = 1)
+        img_name = f"{base_name}{cut_name}.png"
+        full_path_img = os.path.join(PATH_IMG, img_name)
+        
+        # Save figure
+        csd_plot.savefig(full_path_img, 
+                        format='png', 
+                        bbox_inches='tight', 
+                        pad_inches=0, 
+                        dpi=DPI)
+        plt.close(csd_plot)
+        return full_path_img, img_name
 
 # TODO: Figure out how to save the data in multiple files after 500 datapoints generation
 #     - thats for safety 
@@ -610,7 +703,7 @@ def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot, 
     K, N, S = config_tuple
    
     # save img of CSD 
-    fpi, img_name = save_img_csd(config_tuple, csd_plot)
+    fpi, img_name = save_img_csd(config_tuple, csd_plot, cut)
    
     # save datapoints
     csd = Image.open(fpi)
@@ -666,10 +759,10 @@ def generate_datapoint(args):
     print(f"Configuration: K={K}, N={N}, S={S}")
 
     try:
-        # Create a unique seed for this process
+        # Create unique seed
         process_id = os.getpid()
-        current_time = int(time.time() * 1000)  # Current time in milliseconds
-        unique_seed = (process_id + current_time + i) % (2**32 - 1)  # Ensure it's within numpy's seed range
+        current_time = int(time.time() * 1000)
+        unique_seed = (process_id + current_time + i) % (2**32 - 1)
         
         # Set the seed for numpy and random
         np.random.seed(unique_seed)
@@ -681,16 +774,25 @@ def generate_datapoint(args):
             
         C_DD, C_DG, ks, cut, x, y, csd, poly, sensor, device, sensors = result
         
-        if S == 0:  # Replace NOISE check
+        if S == 0:
             fig, _ = plot_CSD(x, y, csd, poly, only_labels=False)
-            return (C_DD, C_DG, ks, cut, x_vol, y_vol, fig, np.gradient(csd,axis=0)+np.gradient(csd,axis=1), device, sensors)
-        else:
+            gradient = np.gradient(csd,axis=0)+np.gradient(csd,axis=1)
+            return (C_DD, C_DG, ks, cut, x_vol, y_vol, fig, gradient, device, sensors)
+        elif S == 1:
             fig, _ = plot_CSD(x, y, sensor, poly)
-            return (C_DD, C_DG, ks, cut, x_vol, y_vol, fig, np.gradient(csd,axis=0)+np.gradient(csd,axis=1), device, sensors)
-            
+            gradient = np.gradient(sensor,axis=0)+np.gradient(sensor,axis=1)
+            return (C_DD, C_DG, ks, cut, x_vol, y_vol, fig, gradient, device, sensors)
+        elif S > 1:
+            figs = [fig for fig,_ in plot_CSD(x, y, sensor, poly)]
+            gradients = [np.gradient(sensor,axis=0)+np.gradient(sensor,axis=1) for sensor in figs]
+            return (C_DD, C_DG, ks, cut, x_vol, y_vol, figs, gradients, device, sensors)
+
     except Exception as e:
         print(f"Execution failed for datapoint {i+1}!")
         print(f"Error: {e}")
+        # print("\nFull traceback:")
+        # traceback.print_exc(file=sys.stdout)
+        print(f"Traceback: {traceback.format_exc()}")
         return None
 
 def ensure_dir_exists(path):

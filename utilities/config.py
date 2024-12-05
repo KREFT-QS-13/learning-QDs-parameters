@@ -18,14 +18,16 @@ d_DG = 100 # nm
 p_dd = 0.65
 p_dg = 0.3
 
-mag_list = [8, 10]
+# mag_list = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+mag_list = [4,5,6,7]
+
 
 tunnel_coupling_const = 100*1e-6    
-slow_noise_amplitude = 5*1e-6 # 0.8*1e-90
-fast_noise_amplitude = 5*1e-6 # 2*1e-90  
+slow_noise_amplitude = 5*1e-7 # 0.8*1e-90
+fast_noise_amplitude = 5*1e-7 # 2*1e-90  
 
-r_min = 10 * d_DD
-r_max = 18 * d_DD
+r_min = 8 * d_DD
+r_max = 12 * d_DD
 
 system_name = ''
 def get_path(K, N, S):

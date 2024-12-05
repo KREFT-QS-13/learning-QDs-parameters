@@ -3,6 +3,7 @@ import h5py, os, csv, json
 import numpy as np
 import pandas as pd
 from datetime import datetime
+import traceback
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -280,11 +281,10 @@ def physics_informed_regularization_torch(config_tuple, outputs, targets, reduct
     Returns:
         Regularization loss tensor
     """
-    _, _, S = config_tuple
-    if S == 0:
-        return torch.tensor(0.0, device=outputs.device, dtype=outputs.dtype)
+    K, _, S = config_tuple
+    # if S == 0:
+    #     return torch.tensor(0.0, device=outputs.device, dtype=outputs.dtype)
 
-    K = config_tuple[0]
     batch_size = outputs.shape[0]
     
     # Reconstruct C_DD and C_DG matrices for both outputs and targets
@@ -311,7 +311,7 @@ def physics_informed_regularization_torch(config_tuple, outputs, targets, reduct
                      true_self_capacitances - 
                      torch.sum(c_dg_hat, dim=2) - 
                      (torch.sum(c_dd_hat, dim=2) - torch.diagonal(c_dd_hat, dim1=1, dim2=2)))
-    
+    # TODO: redefine reg_expression just for diagonal terms in hat matrices the rest from the 
     if reduction == 'mean':
         return torch.mean(torch.norm(reg_expression, dim=1)**2)
     else:
@@ -351,7 +351,7 @@ def calculate_loss(config_tuple, criterion, regularization_coeff, outputs, targe
 
 def train_model(config_tuple, model, X, y, batch_size=32, epochs=100, learning_rate=0.001, val_split=0.2, 
                 test_split=0.1, random_state=42, epsilon=1.0, init_weights=None, 
-                criterion=nn.MSELoss(), regularization_coeff=0.0):
+                criterion=nn.MSELoss(), regularization_coeff=0.0, load_conv_only=None):
     '''
         Train a model on the given data and hyperparameters.
     '''
@@ -552,15 +552,17 @@ def train_evaluate_and_save_models(config_tuple, model_configs, X, y, train_para
         if train_params.get('init_weights'):
             init_weights_path = os.path.normpath(train_params['init_weights']).replace('\\', '/')
             if os.path.exists(init_weights_path):
-                model = load_model_weights(model, init_weights_path)
-                print(f"Loaded initial weights from {init_weights_path}")
+                if train_params.get('load_conv_only', False):
+                    model = load_conv_weights(model, init_weights_path)
+                    print(f"Loaded convolutional weights from {init_weights_path}")
+                else:
+                    model = load_model_weights(model, init_weights_path)
+                    print(f"Loaded all weights from {init_weights_path}")
             else:
-                print(f"Warning: Initial weights file not found at {init_weights_path}. Starting with random weights.")
-                print(f"Current working directory: {os.getcwd()}")
-
+                print(f"Warning: Initial weights file not found at {init_weights_path}")
                 train_params['init_weights'] = None
+                return 0
         
-
         # Model's parameters
         print("\n\n--------- START TRAINING ---------")
         print(f"Model: {model_name}")
@@ -572,7 +574,7 @@ def train_evaluate_and_save_models(config_tuple, model_configs, X, y, train_para
         trained_model, history, test_loader = train_model(config_tuple, model, X, y, **train_params)
         
         # Evaluate the model
-        test_loss, global_test_accuracy, local_test_accuracy, test_mse, predictions, vec_local_test_accuracy = evaluate_model(trained_model, test_loader, epsilon=train_params.get('epsilon', 1.0))
+        test_loss, global_test_accuracy, local_test_accuracy, test_mse, predictions, vec_local_test_accuracy = evaluate_model(config_tuple, trained_model, test_loader, epsilon=train_params.get('epsilon', 1.0))
         
         # Collect performance metrics on the test set
         metrics = collect_performance_metrics(trained_model, test_loader)
@@ -776,6 +778,8 @@ class NumpyEncoder(json.JSONEncoder):
             return int(obj)
         if isinstance(obj, np.floating):
             return float(obj)
+        if isinstance(obj, torch.nn.modules.loss._Loss):
+            return obj.__class__.__name__
         return super(NumpyEncoder, self).default(obj)
 
 def save_results_and_history(result, history,  predictions, save_dir):
@@ -880,7 +884,7 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
             'epochs':  train_params.get('epochs', 'N/A'),
             'learning_rate':  train_params.get('learning_rate', 'N/A'),
             'regularization_coeff': train_params.get('regularization_coeff', '0'),
-            'criterion': train_params.get('criterion', 'nn.MSELoss()'),
+            'criterion': train_params.get('criterion', nn.MSELoss()),
             'epsilon': epsilon,
             'test_accuracy_global': result['global_test_accuracy'],
             'test_accuracy_local':result['local_test_accuracy'],
@@ -1119,3 +1123,53 @@ def generate_csd_from_prediction(config_tuple, prediction):
 #     pred_csd = u.plot_CSD(xks, yks, csd_dataks, polytopesks)
 
 #     return pred_csd
+
+def load_conv_weights(model, path):
+    """
+    Load only the convolutional layers' weights from a saved ResNet model.
+    
+    Args:
+        model (torch.nn.Module): The model to load weights into
+        path (str): Path to the saved model weights
+    
+    Returns:
+        torch.nn.Module: Model with loaded convolutional weights
+    """
+    try:
+        # Load state dict
+        state_dict = torch.load(path, map_location=c.DEVICE, weights_only=True)
+        
+        # Create new state dict with only conv layers
+        new_state_dict = {}
+        for name, param in state_dict.items():
+            # Include conv layers, batch norm, and their related parameters
+            if any(x in name for x in ['conv', 'bn', 'downsample']):
+                if 'base_model' in name:
+                    # For ResNet models, keep the base_model prefix
+                    new_state_dict[name] = param
+                else:
+                    # For custom models, might need to add base_model prefix
+                    new_name = f'base_model.{name}' if 'base_model' not in name else name
+                    new_state_dict[new_name] = param
+        
+        # Load the filtered state dict
+        missing_keys, unexpected_keys = model.load_state_dict(new_state_dict, strict=False)
+        
+        print("Successfully loaded convolutional weights")
+        print(f"Missing keys: {missing_keys}")
+        print(f"Unexpected keys: {unexpected_keys}")
+        
+        # Initialize the remaining layers with Xavier initialization
+        for name, param in model.named_parameters():
+            if name not in new_state_dict:
+                if 'weight' in name:
+                    nn.init.xavier_uniform_(param)
+                elif 'bias' in name:
+                    nn.init.zeros_(param)
+        
+    except Exception as e:
+        print(f"Error loading convolutional weights: {e}")
+        print(f"Traceback: {traceback.format_exc()}")
+        raise
+    
+    return model

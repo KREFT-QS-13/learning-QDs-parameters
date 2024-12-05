@@ -38,6 +38,8 @@ def main():
     parser.add_argument('--sensors_angle', type=u.parse_array, default=None,
                         help='The sensors angle in string format. Example: "[0,0,0]"')
     
+    parser.add_argument('--system_name', type=str, default=None)
+
 
     args = parser.parse_args()
     N_batch = args.N
@@ -45,6 +47,7 @@ def main():
     K = args.K
     sensors_radius = args.sensors_radius
     sensors_angle = args.sensors_angle
+    system_name = args.system_name
 
     if args.S>1 and args.device is None:
         raise ValueError("The device and the number of sensors must be provided when noise is used.")
@@ -54,6 +57,14 @@ def main():
         S = args.S
         N_dots = len(u.get_dots_indices(device))
         K = N_dots + S
+
+    if system_name == "fixed_4_2":
+        device = np.ones((2,2))
+        sensors_radius = [0,3/2*np.pi]
+        K = 6
+        S = 2
+        N_dots = len(u.get_dots_indices(device))
+
 
     if sensors_radius is not None or sensors_angle is not None:
         assert S>0, "The number of sensors must be provided when sensors_radius or sensors_angle are used."
