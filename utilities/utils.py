@@ -244,7 +244,7 @@ def get_all_euclidean_cuts(config_tuple):
     return cuts 
 
 def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesks: list[np.ndarray], 
-             only_edges:bool=True, only_labels:bool=True, res:int=RESOLUTION, dpi:int=DPI):
+             only_edges:bool=False, only_labels:bool=True, res:int=RESOLUTION, dpi:int=DPI):
     """
     Plot the charge stability diagram (CSD).
     
@@ -262,40 +262,44 @@ def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesk
         tuple: (figure, axis) if 2D input
                list of (figure, axis) if 3D input
     """
-    if len(csd_or_sensor.shape) == 3:
-        # Handle 3D array (multiple channels)
-        figures_and_axes = []
-        for channel in range(csd_or_sensor.shape[2]):
+
+    # if len(csd_or_sensor.shape) > 3:
+    # Handle 3D array (multiple channels)
+    figures_and_axes = []
+    for cut in range(csd_or_sensor.shape[0]):
+        for channel in range(csd_or_sensor.shape[-1]):
             plt.figure(figsize=(res/dpi, res/dpi), dpi=dpi)
             ax = plt.gca()
-            
-            ax.pcolormesh(1e3*x, 1e3*y, csd_or_sensor[:,:,channel])
-            plot_polytopes(ax, polytopesks, axes_rescale=1e3, 
-                         only_edges=only_edges, only_labels=only_labels)
-            
+        
+            ax.pcolormesh(1e3*x, 1e3*y, csd_or_sensor[cut,:,:,channel].squeeze())
+                
+            # print(polytopesks, len(polytopesks))
+            plot_polytopes(ax, polytopesks[cut], axes_rescale=1e3, 
+                            only_edges=only_edges, only_labels=only_labels)
+                
             ax.set_xlim(x[0]*1e3, x[-1]*1e3)
             ax.set_ylim(y[0]*1e3, y[-1]*1e3)
             ax.axis('off')
             plt.tight_layout(pad=0)
-            
+                
             figures_and_axes.append((plt.gcf(), ax))
-        
-        return figures_and_axes
-    else:
-        # Original behavior for 2D array
-        plt.figure(figsize=(res/dpi, res/dpi), dpi=dpi)
-        ax = plt.gca()
+            
+    return figures_and_axes
+    # else:
+    #     # Original behavior for 2D array
+    #     plt.figure(figsize=(res/dpi, res/dpi), dpi=dpi)
+    #     ax = plt.gca()
 
-        ax.pcolormesh(1e3*x, 1e3*y, csd_or_sensor)
-        plot_polytopes(ax, polytopesks, axes_rescale=1e3, 
-                      only_edges=only_edges, only_labels=only_labels)
+    #     ax.pcolormesh(1e3*x, 1e3*y, csd_or_sensor)
+    #     plot_polytopes(ax, polytopesks, axes_rescale=1e3, 
+    #                   only_edges=only_edges, only_labels=only_labels)
 
-        ax.set_xlim(x[0]*1e3, x[-1]*1e3)
-        ax.set_ylim(y[0]*1e3, y[-1]*1e3)
-        ax.axis('off')
-        plt.tight_layout(pad=0)
+    #     ax.set_xlim(x[0]*1e3, x[-1]*1e3)
+    #     ax.set_ylim(y[0]*1e3, y[-1]*1e3)
+    #     ax.axis('off')
+    #     plt.tight_layout(pad=0)
 
-        return plt.gcf(), ax
+    #     return plt.gcf(), ax
 
 def get_mask(device: np.ndarray, config_tuple: tuple[int, int, int]) -> np.ndarray:
     """
@@ -361,10 +365,13 @@ def generate_experiment_config(C_DD:np.ndarray, C_DG:np.ndarray, config_tuple:tu
 
 def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.ndarray=None, 
                      config_tuple:tuple[int,int,int]=None, sensors_radius:list[float]=None, 
-                     sensors_angle:list[float]=None, const_sensor_r=False, cut:np.ndarray=None):
+                     sensors_angle:list[float]=None, const_sensor_r=False, cut:np.ndarray=None,
+                     all_euclidean_cuts:bool=False):
     """
         Run the QDarts experiment.
     """
+
+    print(f"Generating dataset for {config_tuple} configuration")
     if config_tuple is None:
         raise ValueError("config_tuple must be provided")
         
@@ -379,74 +386,83 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
         
         if cut is None:
             try:
-                cut = get_cut(config_tuple)
+                if all_euclidean_cuts:
+                    cuts = get_all_euclidean_cuts(config_tuple)
+                else:
+                    cuts = get_cut(config_tuple)
+                    cuts = cuts.reshape(1, *cuts.shape)
             except ValueError as e:
-                print(f"Error generating cut: {e}")
+                print(f"Error generating cut(s): {e}")
                 return None
             
         use_sensor_signal = S > 0
         
-
-        # target_state, target_transition = 1+np.zeros(K, dtype=int), np.zeros(K, dtype=int)
-        # target_state[0], target_state[-S:] = 1, 5
-        # target_transition[0], target_transition[1] = 1, -1
-        # target_transition[2], target_transition[3] = 1, -1
-
-        target_state =  np.zeros(K, dtype=int)+1
-        target_state[-S:] = 5
-        target_transition = cut[0]-cut[1]
-        print(f"Cut: {cut}, State: {target_state}, Transition: {target_transition}")
-
-        try:
-            if S == 0:  # Replace NOISE check
-                capacitance_config, _, _ = generate_experiment_config(C_DD, C_DG, config_tuple, device)
-                experiment = Experiment(capacitance_config)
-
-                result = experiment.generate_CSD(
-                x_voltages=x_vol,  # V
-                y_voltages=y_vol,  # V
-                plane_axes=cut,
-                # compute_polytopes=True
-            )
-            else:
-                # capacitance_config, tunneling_config, sensor_config = generate_experiment_config(C_DD, C_DG, config_tuple, device)
-                experiment = Experiment(*generate_experiment_config(C_DD, C_DG, config_tuple, device))
-
-                result = experiment.generate_CSD(
-                    x_voltages=x_vol,  # V
-                    y_voltages=y_vol,  # V
-                    
-                    #TODO: depending on the size of the system change the target state/transition accordingly
-                    target_state = target_state,  # target state for transition
-                    target_transition = target_transition, #target transition from target state, here transition to [2,3,2,3,5,5]
-                    
-                    compensate_sensors=True if S==2 and N==4 else False,
-
-                    plane_axes=cut,
-                    compute_polytopes=True,
-                    use_sensor_signal=use_sensor_signal,
-                )
+        all_csd_data = []
+        all_polytopes = []
+        all_sensor_data = []
+        
+        for cut_idx in range(cuts.shape[0]):
+            current_cut = cuts[cut_idx] if cuts.shape[0] > 1 else cuts[0]
+            target_state = np.zeros(K, dtype=int) + 1
+            target_state[-S:] = 5
+            target_transition = current_cut[0] - current_cut[1]
             
-            if result is None:
-                print("generate_CSD returned None")
-                return None
+            try:
+                if S == 0:
+                    capacitance_config, _, _ = generate_experiment_config(C_DD, C_DG, config_tuple, device)
+                    experiment = Experiment(capacitance_config)
+                    result = experiment.generate_CSD(
+                        x_voltages=x_vol,
+                        y_voltages=y_vol,
+                        plane_axes=current_cut,
+                    )
+                else:
+                    experiment = Experiment(*generate_experiment_config(C_DD, C_DG, config_tuple, device))
+                    result = experiment.generate_CSD(
+                        x_voltages=x_vol,
+                        y_voltages=y_vol,
+                        target_state=target_state,
+                        target_transition=target_transition,
+
+                        compensate_sensors=True if S==2 and N==4 else False,
+
+                        plane_axes=current_cut,
+                        compute_polytopes=True,
+                        use_sensor_signal=use_sensor_signal,
+                    )
                 
-            xks, yks, csd_dataks, polytopesks, sensor, _ = result
-            
-            if S > 0: 
-                return C_DD, C_DG, ks, cut, xks, yks, csd_dataks, polytopesks, sensor, device, sensors_coordinates
-            else:
-                return C_DD, C_DG, ks, cut, xks, yks, csd_dataks, polytopesks, None, device, sensors_coordinates
-            
-        except Exception as e:
-            print(f"Error in experiment generation: {e}")
-            print(f"Traceback: {traceback.format_exc()}")
+                if result is None:
+                    print(f"generate_CSD returned None for cut {cut_idx}")
+                    continue
+                    
+                xks, yks, csd_dataks, polytopesks, sensor, _ = result
+                
+                all_csd_data.append(csd_dataks)
+                all_polytopes.append(polytopesks)
+                all_sensor_data.append(sensor if sensor is not None else None)
+                
+            except Exception as e:
+                print(f"Error in experiment generation for cut {cut_idx}: {e}")
+                print(f"Traceback: {traceback.format_exc()}")
+                continue
+        
+        if not all_csd_data:  # If no successful generations
             return None
+            
+        # Convert lists to arrays
+        all_csd_data = np.array(all_csd_data)
+        all_polytopes = np.array(all_polytopes)
+        all_sensor_data = np.array(all_sensor_data) if all_sensor_data[0] is not None else None
+        
+        if S > 0:
+            return C_DD, C_DG, ks, cuts, xks, yks, all_csd_data, all_polytopes, all_sensor_data, device, sensors_coordinates
+        else:
+            return C_DD, C_DG, ks, cuts, xks, yks, all_csd_data, all_polytopes, None, device, sensors_coordinates
             
     except Exception as e:
         print(f"Error in capacitance matrix generation: {e}")
         print(f"Traceback: {traceback.format_exc()}")
-        return None
+        return None 
 
 def ensure_path(path):
     """
@@ -525,47 +541,56 @@ def save_img_csd(config_tuple, csd_plot, cut):
         cut (np.ndarray): Cut array used to generate the CSD
     
     Returns:
-        tuple: (path, name) for single figure or list of (path, name) for multiple figures
+        tuple: (unique_id, list of (path, name) for saved images)
     """
     K, N, S = config_tuple
     
     # Generate base name
     base_name = ''.join([str(random.randint(0, 9)) for _ in range(10)])
     
-    # Add cut indices to name
-    indices = [np.argwhere(c == 1).squeeze().tolist() for c in cut]
-    cut_name = '_'+''.join(str(i) for i in indices)
-    
-    if len(csd_plot.shape) == 3:
-        # Handle multiple figures (S > 1)
-        saved_files = []
-        for sensor_idx, fig in enumerate(csd_plot):
-            # Create name with sensor index
-            img_name = f"{base_name}{cut_name}_s{sensor_idx}.png"
-            full_path_img = os.path.join(PATH_IMG, img_name)
-            
-            # Save figure
-            fig.savefig(full_path_img, 
-                       format='png', 
-                       bbox_inches='tight', 
-                       pad_inches=0, 
-                       dpi=DPI)
-            plt.close(fig)
-            saved_files.append((full_path_img, img_name))
-        return saved_files
-    else:
-        # Handle single figure (S = 0 or S = 1)
-        img_name = f"{base_name}{cut_name}.png"
-        full_path_img = os.path.join(PATH_IMG, img_name)
+    # Create directory for this group
+    group_dir = os.path.join(PATH_IMG, base_name)
+    ensure_path(group_dir)
+
+    saved_files = []
+
+    # Handle multiple cuts
+    for cut_idx in range(len(cut)):
+        # Add cut indices to name
+        indices = [np.argwhere(c == 1).squeeze().tolist() for c in cut[cut_idx]]
+        cut_name = '_'+''.join(str(i) for i in indices)
         
-        # Save figure
-        csd_plot.savefig(full_path_img, 
-                        format='png', 
-                        bbox_inches='tight', 
-                        pad_inches=0, 
-                        dpi=DPI)
-        plt.close(csd_plot)
-        return full_path_img, img_name
+        if S > 0 and len(csd_plot.shape) > 3:  # Multiple sensors
+            for sensor_idx in range(csd_plot.shape[-1]):
+                img_name = f"{base_name}{cut_name}_s{sensor_idx}.png"
+                full_path_img = os.path.join(group_dir, img_name)
+                
+                fig = plt.figure(figsize=(c.RESOLUTION/c.DPI, c.RESOLUTION/c.DPI), dpi=c.DPI)
+                plt.imshow(csd_plot[cut_idx, :, :, sensor_idx])
+                plt.axis('off')
+                plt.tight_layout(pad=0)
+                
+                plt.savefig(full_path_img, format='png', bbox_inches='tight', 
+                           pad_inches=0, dpi=c.DPI)
+                plt.close(fig)
+                
+                saved_files.append((full_path_img, img_name))
+        else:  # Single sensor or no sensors
+            img_name = f"{base_name}{cut_name}.png"
+            full_path_img = os.path.join(group_dir, img_name)
+            
+            fig = plt.figure(figsize=(c.RESOLUTION/c.DPI, c.RESOLUTION/c.DPI), dpi=c.DPI)
+            plt.imshow(csd_plot[cut_idx])
+            plt.axis('off')
+            plt.tight_layout(pad=0)
+            
+            plt.savefig(full_path_img, format='png', bbox_inches='tight', 
+                       pad_inches=0, dpi=c.DPI)
+            plt.close(fig)
+            
+            saved_files.append((full_path_img, img_name))
+    
+    return base_name, saved_files
 
 # TODO: Figure out how to save the data in multiple files after 500 datapoints generation
 #     - thats for safety 
@@ -605,19 +630,35 @@ def save_to_hfd5(dictionary: dict):
         for key, value in dictionary.items():
             if key in f:
                 del f[key]  # Delete existing group if it exists
-            group = f.create_group(key)
             
-            for sub_key, sub_value in value.items():
-                if isinstance(sub_value, (np.ndarray, list, torch.Tensor)):
-                    if isinstance(sub_value, torch.Tensor):
-                        sub_value = sub_value.numpy()
-                    group.create_dataset(sub_key, data=sub_value)
-                elif isinstance(sub_value, (int, float, str)):
-                    group.attrs[sub_key] = sub_value
-                elif sub_value is None or np.isnan(sub_value):
-                    group.attrs[sub_key] = 'NaN'
-                else:
-                    print(f"Unsupported type for {sub_key}: {type(sub_value)}")
+            group = f.create_group(key)
+            cuts_group = group.create_group('cuts')
+
+            # Save metadata
+            for meta_key in ['K', 'N', 'S', 'tunnel_coupling_const', 'slow_noise_amplitude', 'fast_noise_amplitude',
+                            'p_dd', 'p_dg', 'd_DD', 'd_DG', 'r_min', 'r_max', 'base_name']:
+                if meta_key in value:
+                    group.attrs[meta_key] = value[meta_key]
+            
+            # Save matrices
+            for matrix_key in ['C_DD', 'C_DG', 'device', 'sensors_coordinates']:
+                if matrix_key in value:
+                    group.create_dataset(matrix_key, data=value[matrix_key])
+            
+            # Save voltage ranges
+            for vol_key in ['x_vol', 'y_vol']:
+                if vol_key in value:
+                    group.create_dataset(vol_key, data=value[vol_key])
+            
+            # Save cuts and related data
+            for cut_idx in range(len(value['cuts'])):
+                cut_group = cuts_group.create_group(f'cut_{cut_idx}')
+                cut_group.create_dataset('cut', data=value['cuts'][cut_idx])
+                cut_group.create_dataset('csd', data=value['csd'][cut_idx])
+                cut_group.create_dataset('poly', data=value['poly'][cut_idx])
+                cut_group.create_dataset('sensor_output', data=value['sensor_output'][cut_idx])
+                if value.get('csd_gradient') is not None:
+                    cut_group.create_dataset('csd_gradient', data=value['csd_gradient'][cut_idx])
 
 def get_batch_folder_name(batch_num: int, config_tuple: tuple[int, int, int]):
     """
@@ -694,32 +735,39 @@ def reconstruct_img_with_matrices(batch_num: int, img_name: str, config_tuple: t
         
         return img, C_DD, C_DG
     
-def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot, csd_gradient, device, sensors):
+def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, poly, csd, sensor_output, csd_plot, csd_gradient, device, sensors_coordinates):
     """
     Combine all 'saving' functions to create a datapoint.
     """
     K, N, S = config_tuple
    
     # save img of CSD 
-    fpi, img_name = save_img_csd(config_tuple, csd_plot, cuts)
+    base_name, saved_files = save_img_csd(config_tuple, csd_plot, cuts)
    
-    # save datapoints
-    csd = Image.open(fpi)
-    csd_array = np.array(csd)
-    
-    # Handle grayscale images (2D) vs RGB images (3D)
-    if len(csd_array.shape) == 2:
-        # If grayscale, add channel dimension
-        csd_tensor = torch.tensor(csd_array[None, :, :])
-    else:
-        # If RGB/RGBA, permute dimensions to [C, H, W]
-        csd_tensor = torch.tensor(csd_array).permute(2, 0, 1)
+    # Create tensors for each cut
+    csd_tensors = []
+    gradient_tensors = []
 
-    # Handle gradient data similarly
-    if len(csd_gradient.shape) == 2:
-        csd_gradient_tensor = torch.tensor(csd_gradient[None, :, :])
-    else:
-        csd_gradient_tensor = torch.tensor(csd_gradient).permute(2, 0, 1)
+    for (fpi, img_name) in saved_files:
+        # save datapoints
+        csd = Image.open(fpi)
+        csd_array = np.array(csd)
+        
+        # Handle grayscale images (2D) vs RGB images (3D)
+        if len(csd_array.shape) == 2:
+            # If grayscale, add channel dimension
+            csd_tensor = torch.tensor(csd_array[None, :, :])
+        else:
+            # If RGB/RGBA, permute dimensions to [C, H, W]
+            csd_tensor = torch.tensor(csd_array).permute(2, 0, 1)
+        csd_tensors.append(csd_tensor)
+        
+        # Handle gradient data similarly
+        if len(csd_gradient.shape) == 2:
+            csd_gradient_tensor = torch.tensor(csd_gradient[None, :, :])
+        else:
+            csd_gradient_tensor = torch.tensor(csd_gradient).permute(2, 0, 1)
+        gradient_tensors.append(csd_gradient_tensor)
 
     ks = np.nan if ks is None else ks
     datapoints_dict = {img_name: {
@@ -735,23 +783,26 @@ def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, csd_plot, 
         'x_vol': np.array(x_vol), 
         'y_vol': np.array(y_vol), 
         'cuts': np.array(cuts), 
+        'poly': poly,
+        'sensor_output': sensor_output,
         'csd': csd_tensor,
         'csd_gradient': csd_gradient_tensor,
         'device': device,
-        'sensors_coordinates': sensors,
+        'sensors_coordinates': sensors_coordinates,
         'p_dd': c.p_dd,
         'p_dg': c.p_dg,
         'd_DD': c.d_DD,
         'd_DG': c.d_DG,
         'r_min': c.r_min,
         'r_max': c.r_max,
-    }} # 22 elements
+        'base_name': base_name,
+    }} # 23 elements
     
     save_to_hfd5(datapoints_dict)
 
 
 def generate_datapoint(args):
-    x_vol, y_vol, ks, device, i, N_batch, config_tuple, sensors_radius, sensors_angle = args
+    x_vol, y_vol, ks, device, i, N_batch, config_tuple, sensors_radius, sensors_angle, const_sensors_radius, all_euclidean_cuts, cut = args
     K, N, S = config_tuple
     print(f"Generating datapoint {i+1}/{N_batch}:")
     print(f"Configuration: K={K}, N={N}, S={S}")
@@ -766,24 +817,24 @@ def generate_datapoint(args):
         np.random.seed(unique_seed)
         random.seed(unique_seed)
         
-        result = generate_dataset(x_vol, y_vol, ks, device, config_tuple, sensors_radius, sensors_angle)
+        result = generate_dataset(x_vol, y_vol, ks, device, config_tuple, sensors_radius, sensors_angle, const_sensors_radius, cut, all_euclidean_cuts)
         if result is None:
             return None
             
-        C_DD, C_DG, ks, cut, x, y, csd, poly, sensor, device, sensors = result
+        C_DD, C_DG, ks, cut, x, y, csd, poly, sensor, device, sensors_coordinates = result
         
         if S == 0:
             fig, _ = plot_CSD(x, y, csd, poly, only_labels=False)
             gradient = np.gradient(csd,axis=0)+np.gradient(csd,axis=1)
-            return (C_DD, C_DG, ks, cut, x_vol, y_vol, fig, gradient, device, sensors)
+            return (C_DD, C_DG, ks, cut, x_vol, y_vol, csd, poly, sensor, fig, gradient, device, sensors_coordinates)
         elif S == 1:
             fig, _ = plot_CSD(x, y, sensor, poly)
             gradient = np.gradient(sensor,axis=0)+np.gradient(sensor,axis=1)
-            return (C_DD, C_DG, ks, cut, x_vol, y_vol, fig, gradient, device, sensors)
+            return (C_DD, C_DG, ks, cut, x_vol, y_vol, csd, poly, sensor, fig, gradient, device, sensors_coordinates)
         elif S > 1:
-            figs = [fig for fig,_ in plot_CSD(x, y, sensor, poly)]
-            gradients = [np.gradient(sensor,axis=0)+np.gradient(sensor,axis=1) for sensor in figs]
-            return (C_DD, C_DG, ks, cut, x_vol, y_vol, figs, gradients, device, sensors)
+            figs = [fig for fig, _ in plot_CSD(x, y, sensor, poly)]
+            gradients = [np.gradient(s,axis=0)+np.gradient(s,axis=1) for s in sensor]
+            return (C_DD, C_DG, ks, cut, x_vol, y_vol, csd, poly, sensor, figs, gradients, device, sensors_coordinates)
 
     except Exception as e:
         print(f"Execution failed for datapoint {i+1}!")

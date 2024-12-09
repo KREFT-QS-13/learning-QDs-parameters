@@ -151,7 +151,7 @@ def preprocess_csd(csd_array: np.ndarray, input_type: str = 'csd'):
         transforms.ToPILImage(),  # Convert NumPy array to PIL Image
         transforms.Grayscale(num_output_channels=1),  # Convert to grayscale with a single channel
         transforms.ToTensor(),  # Converts grayscale image to tensor with shape (1, H, W) in [0, 1]
-        transforms.Normalize(mean=[0.5], std=[0.5])  # Normalize to [-1, 1]
+        # transforms.Normalize(mean=[0.5], std=[0.5])  # Normalize to [-1, 1]
     ])
     
     return transform(csd_array)
@@ -292,6 +292,7 @@ def divide_dataset(X, y, batch_size, val_split, test_split, random_state):
 
     return train_loader, val_loader, test_loader
 
+#TODO: check if this is correct
 def physics_informed_regularization_torch(config_tuple, outputs, targets, reduction='mean'):
     """
     PyTorch version of physics-informed regularization that works with batches and enables autograd.
@@ -335,6 +336,12 @@ def physics_informed_regularization_torch(config_tuple, outputs, targets, reduct
                      torch.sum(c_dg_hat, dim=2) - 
                      (torch.sum(c_dd_hat, dim=2) - torch.diagonal(c_dd_hat, dim1=1, dim2=2)))
     # TODO: redefine reg_expression just for diagonal terms in hat matrices the rest from the 
+    # More specific regularization expression: just for diagonal terms in hat matrices the rest from the true values
+    # reg_expression = (torch.diagonal(c_dd_hat, dim1=1, dim2=2) - 
+    #                  true_self_capacitances - 
+    #                  torch.diag(c_dg, dim1=1, dim2=2) + torch.sum(c_dg, dim=2) - 
+    #                  (torch.sum(c_dd_hat, dim=2) - torch.diagonal(c_dd_hat, dim1=1, dim2=2)))
+    
     if reduction == 'mean':
         return torch.mean(torch.norm(reg_expression, dim=1)**2)
     else:
@@ -555,7 +562,7 @@ def collect_performance_metrics(model, test_loader):
     }
     return metrics
 
-def train_evaluate_and_save_models(config_tuple, model_configs, X, y, train_params, save_dir=None):
+def train_evaluate_and_save_models(config_tuple, model_configs, X, y, param_names, train_params, save_dir=None):
     """Train, evaluate, and save multiple models based on the given configurations."""
     if save_dir is None:
         save_dir = os.path.join(c.PATH_0, c.PATH_TO_RESULTS)
@@ -630,6 +637,7 @@ def train_evaluate_and_save_models(config_tuple, model_configs, X, y, train_para
             'input_shape': X.shape[1:],
             'output_shape': y.shape[1:],
             'dataset_size': len(X),
+            'param_names': param_names,
             'train_params': {k: v for k, v in train_params.items()},
             'history': {k: v for k, v in history.items() if k != 'L2 norm'},
             'test_loss': float(test_loss),
@@ -760,7 +768,7 @@ def plot_l2_norm_polar(targets, outputs, save_dir, epsilon, num_groups=6, num_po
     if num_groups > 5:
         rticks = np.concatenate([
             np.arange(0, min(5*epsilon, rmax), epsilon),
-            np.arange(5*epsilon, rmax + epsilon, max(epsilon, 1))
+            np.arange(5*epsilon, rmax + epsilon, max(epsilon, 2))
         ])
         # Set the rmax to be the ceiling of the max L2 norm
         rmax = np.ceil(np.max(l2_norms))

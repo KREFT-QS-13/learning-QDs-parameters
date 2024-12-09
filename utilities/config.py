@@ -1,5 +1,6 @@
 import os 
 import torch
+import numpy as np
 
 PATH_0 = "./"
 # PATH_0 = "../../data1/Project_data_and_results/"
@@ -15,11 +16,14 @@ RESOLUTION = 96 #96 256
 ## ------- Quantum dots system parameters -------
 d_DD = 100 # nm
 d_DG = 100 # nm
-p_dd = 0.65
-p_dg = 0.3
+lambda_coeff  = d_DD/2
+# p_dd = 0.6
+p_dd = np.exp(-lambda_coeff**(-1))
+p_dg = 0.2
 
-# mag_list = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-mag_list = [4,5,6,7]
+
+# mag_list = [5,6,8, 9, 10, 11, 12, 13, 14, 15]
+mag_list = [5]
 
 
 tunnel_coupling_const = 100*1e-6    

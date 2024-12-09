@@ -44,12 +44,14 @@ def main():
     datasize_cut = 50000
     # for training with csd images:
     # X, y = mu.prepare_data(config_tuple, datasize_cut=datasize_cut, param_names=['csd', 'C_DD', 'C_DG'])
-    
+    # param_names = ['csd', 'C_DD', 'C_DG']
     # for training with csd gradients:
     X, y = mu.prepare_data(config_tuple, datasize_cut=datasize_cut, param_names=['csd_gradient', 'C_DD', 'C_DG'])
+    param_names = ['csd_gradient', 'C_DD', 'C_DG']
 
     # for testing with csd images:
     # X, y = mu.prepare_data(config_tuple, all_batches=False, batches=np.arange(1,11))
+    # param_names = ['csd_gradient', 'C_DD', 'C_DG']
    
     print(f'Successfully prepared {len(X)} datapoints with input size {c.RESOLUTION}x{c.RESOLUTION}.\n')
     print(f'Time taken: {time.time() - start_time:.2f} seconds')
@@ -70,10 +72,10 @@ def main():
         #     'model': ResNet, 
         #     'params': {
         #         'config_tuple': config_tuple,
-        #         'name': 'resnet10_model',
-        #         'base_model': 'resnet10',
+        #         'name': 'resnet12_model',
+        #         'base_model': 'resnet12',
         #         'pretrained': True,
-        #         'dropout': 0.2,
+        #         'dropout': 0.1,
         #         'custom_head': [2048, 1024],
         #         'filters_per_layer': [16, 32, 64, 128],
         #     }
@@ -97,7 +99,7 @@ def main():
                 'name': 'resnet18_model',
                 'base_model': 'resnet18',
                 'pretrained': True,
-                'dropout': 0.25,
+                'dropout': 0.2,
                 'custom_head': [2048, 1024],
                 'filters_per_layer': None,
             }
@@ -140,40 +142,54 @@ def main():
         #     'regularization_coeff': 0.8,
         #     'criterion': nn.MSELoss(),
         # },
+        # {   
+        #     'batch_size': 64,
+        #     'epochs': 10, 
+        #     'learning_rate': 0.001,
+        #     'val_split': 0.2,
+        #     'test_split': 0.2,
+        #     'random_state': 42,
+        #     'epsilon': 0.5,
+        #     'init_weights': None, 
+        #     'regularization_coeff':  1.25,
+        #     'criterion': nn.MSELoss(),
+        # },
+        # {   
+        #     'batch_size': 128,
+        #     'epochs': 10, 
+        #     'learning_rate': 0.001,
+        #     'val_split': 0.2,
+        #     'test_split': 0.2,
+        #     'random_state': 42,
+        #     'epsilon': 0.5,
+        #     'init_weights': None, 
+        #     'regularization_coeff': 1.25,
+        #     'criterion': nn.MSELoss(),
+        #  },
         {   
-            'batch_size': 64,
-            'epochs': 50, 
+            'batch_size': 128,
+            'epochs': 10, 
             'learning_rate': 0.0005,
             'val_split': 0.2,
             'test_split': 0.2,
             'random_state': 42,
-            'epsilon': 0.1,
+            'epsilon': 0.5,
             'init_weights': None, 
-            'regularization_coeff': 1.0,
+            'regularization_coeff': 1.5,
             'criterion': nn.MSELoss(),
-        },
-    #     {   
-    #         'batch_size': 64,
-    #         'epochs': 50, 
-    #         'learning_rate': 0.0005,
-    #         'val_split': 0.2,
-    #         'test_split': 0.2,
-    #         'random_state': 42,
-    #         'epsilon': 0.1,
-    #         'init_weights': None, 
-    #         'regularization_coeff': 0.0,
-    #         'criterion': nn.MSELoss(),
-    #     },
+         },
+         
     ]  
     # train_params_list = train_params_list
 
+    assert len(model_configs) == len(train_params_list), "Number of model configurations and training parameters must match."
     # Combine model configurations with their respective training parameters
     models_configs = [{'model_config': mc, 'train_params': tp} for mc, tp in zip(model_configs, train_params_list)]
 
     # Train, evaluate, and save models
     for config in models_configs:  
         # summary(config['model_config']['model'](**config['model_config']['params']), (1, 1, c.RESOLUTION, c.RESOLUTION))
-        results = mu.train_evaluate_and_save_models(config_tuple, [config['model_config']], X, y, config['train_params'])
+        results = mu.train_evaluate_and_save_models(config_tuple, [config['model_config']], X, y, param_names, config['train_params'])
 
     print("Training, evaluation, and saving complete!")
     print(f"Total time taken: {time.time() - start_time:.2f} seconds")
