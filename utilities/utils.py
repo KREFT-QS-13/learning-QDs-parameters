@@ -148,7 +148,7 @@ def get_device_distance_matrix(device:np.ndarray, sensors:list[tuple[float, floa
     
     return dist_matrix
 
-def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], mean:float=1.0, std:float=0.15, sensor_self_capacitance_coeff:float=5.0) -> np.ndarray:
+def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], mean:float=1.0, std:float=0.15, sensor_self_capacitance_coeff:float=100.0) -> np.ndarray:
     """
         Exponential decay model for the capacitance matrix.
     """
@@ -164,6 +164,9 @@ def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], m
     C_dd_prime[np.eye(C_dd_prime.shape[0], dtype=bool)] = [round(np.random.normal(c*mean, c*std), 4) for c in mag_consts]
     C_dg[np.eye(C_dg.shape[0], dtype=bool)] = [round(np.random.normal(c*mean, c*std), 4) for c in mag_consts]
 
+    C_dd_prime[-1, -1] = 100
+    C_dd_prime[-2, -2] = 100
+
     for i in range(K):
         for j in range(i+1, K):
             C_dd_prime[i,j] = C_dd_prime[j,i] = round(np.sqrt(C_dd_prime[i,i]*C_dd_prime[j,j]) * decay(dist_matrix[i,j]/c.d_DD, c.p_dd), 4)
@@ -172,11 +175,17 @@ def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], m
             else:
                 C_dg[i,j] = C_dg[j,i] = 0 # No cross-talk between the sensor dot and the target dot.
 
-    mask = np.eye(C_dd_prime.shape[0], dtype=bool)
-    mask[:-S, :-S]  = False
-    C_dd_prime[mask] *= sensor_self_capacitance_coeff
+    C_dd = C_dd_prime + np.sum(C_dg, axis=1)*np.eye(K) + (np.sum(C_dd_prime, axis=1)-np.diag(C_dd_prime))*np.eye(K) 
 
-    return C_dd_prime, C_dg
+    # Set/Increase the self-capacitance of the sensors
+    if sensor_self_capacitance_coeff is not None and sensor_self_capacitance_coeff > 0:
+        mask[:-S, :-S]  = False
+        mask = np.eye(C_dd.shape[0], dtype=bool)
+    
+        C_dd[mask] = sensor_self_capacitance_coeff
+        # C_dd[mask] = sensor_self_capacitance_coeff
+    
+    return C_dd, C_dg
 
 
 def generate_capacitance_matrices(config_tuple:tuple[int, int, int]=None, device:np.ndarray=None, const_sensor_r:bool=False,
@@ -215,8 +224,7 @@ def generate_capacitance_matrices(config_tuple:tuple[int, int, int]=None, device
 
         C_DD, C_DG = exp_decay_model(dist_matrix, config_tuple, mean, std)
         
-        C_DD = C_DD + np.sum(C_DG, axis=1)*np.eye(K) + (np.sum(C_DD, axis=1)-np.diag(C_DD))*np.eye(K) 
-
+        
         return C_DD, C_DG, sensors
     else:
         raise ValueError("Device is not provided! For noise generation you need to provide the device!")
@@ -251,7 +259,7 @@ def get_all_euclidean_cuts(config_tuple):
     return cuts 
 
 def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesks: list[np.ndarray], 
-             only_edges:bool=False, only_labels:bool=True, res:int=RESOLUTION, dpi:int=DPI):
+             only_edges:bool=True, only_labels:bool=True, res:int=RESOLUTION, dpi:int=DPI):
     """
     Plot the charge stability diagram (CSD).
     

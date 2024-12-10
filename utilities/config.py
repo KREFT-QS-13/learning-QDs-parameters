@@ -16,21 +16,21 @@ RESOLUTION = 96 #96 256
 ## ------- Quantum dots system parameters -------
 d_DD = 100 # nm
 d_DG = 100 # nm
-lambda_coeff  = 0.3 # expressed in units of d_DD 
-# p_dd = 0.6
-p_dd = np.exp(-lambda_coeff**(-1))
+lambda_coeff  = 2 # expressed in units of d_DD 
+p_dd = 0.3
+# p_dd = np.exp(-lambda_coeff**(-1))
 p_dg = 0.2
 
 
 # mag_list = [5,6,8, 9, 10, 11, 12, 13, 14, 15]
-mag_list = [5]
+mag_list = [4,5]
 
 
 tunnel_coupling_const = 100*1e-6    
-slow_noise_amplitude = 5*1e-7 # 0.8*1e-90
-fast_noise_amplitude = 5*1e-7 # 2*1e-90  
+slow_noise_amplitude = 10*1e-6 # 0.8*1e-90
+fast_noise_amplitude = 30*1e-6 # 2*1e-90  
 
-r_min = 8 * d_DD
+r_min = 5 * d_DD
 r_max = 12 * d_DD
 
 system_name = ''

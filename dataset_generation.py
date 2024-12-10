@@ -63,7 +63,8 @@ def main():
 
     if system_name == "fixed_4_2":
         device = np.ones((2,2))
-        sensors_angle = [0,3/2*np.pi]
+        sensors_angle = [0, 3/2*np.pi]
+        sensors_radius = [1.5*c.d_DD, 1.5*c.d_DD]
         K = 6
         S = 2
         N_dots = len(u.get_dots_indices(device))
