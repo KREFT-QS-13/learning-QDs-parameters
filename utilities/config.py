@@ -16,7 +16,7 @@ RESOLUTION = 96 #96 256
 ## ------- Quantum dots system parameters -------
 d_DD = 100 # nm
 d_DG = 100 # nm
-lambda_coeff  = d_DD/2
+lambda_coeff  = 0.3 # expressed in units of d_DD 
 # p_dd = 0.6
 p_dd = np.exp(-lambda_coeff**(-1))
 p_dg = 0.2

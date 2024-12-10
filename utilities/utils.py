@@ -172,6 +172,10 @@ def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], m
             else:
                 C_dg[i,j] = C_dg[j,i] = 0 # No cross-talk between the sensor dot and the target dot.
 
+    mask = np.eye(C_dd_prime.shape[0], dtype=bool)
+    mask[:-S, :-S]  = False
+    C_dd_prime[mask] *= 5
+    
     return C_dd_prime, C_dg
 
 
