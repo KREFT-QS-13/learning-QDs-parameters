@@ -170,7 +170,7 @@ def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], m
             if i < N and j < N:
                 C_dg[i,j] = C_dg[j,i] = round(np.sqrt(C_dd_prime[i,i]*C_dd_prime[j,j])*decay(dist_matrix[i,j]/c.d_DG, c.p_dg), 4)
             else:
-                C_dg[i,j] = C_dg[j,i] = 0
+                C_dg[i,j] = C_dg[j,i] = 0 # No cross-talk between the sensor dot and the target dot.
 
     return C_dd_prime, C_dg
 
