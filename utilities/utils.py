@@ -148,7 +148,7 @@ def get_device_distance_matrix(device:np.ndarray, sensors:list[tuple[float, floa
     
     return dist_matrix
 
-def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], mean:float=1.0, std:float=0.15) -> np.ndarray:
+def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], mean:float=1.0, std:float=0.15, sensor_self_capacitance_coeff:float=5.0) -> np.ndarray:
     """
         Exponential decay model for the capacitance matrix.
     """
@@ -174,8 +174,8 @@ def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], m
 
     mask = np.eye(C_dd_prime.shape[0], dtype=bool)
     mask[:-S, :-S]  = False
-    C_dd_prime[mask] *= 5
-    
+    C_dd_prime[mask] *= sensor_self_capacitance_coeff
+
     return C_dd_prime, C_dg
 
 
