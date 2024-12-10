@@ -426,9 +426,6 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
                         y_voltages=y_vol,
                         target_state=target_state,
                         target_transition=target_transition,
-
-                        compensate_sensors=True if S==2 and N==4 else False,
-
                         plane_axes=current_cut,
                         compute_polytopes=True,
                         use_sensor_signal=use_sensor_signal,
