@@ -148,7 +148,7 @@ def get_device_distance_matrix(device:np.ndarray, sensors:list[tuple[float, floa
     
     return dist_matrix
 
-def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], mean:float=1.0, std:float=0.15, sensor_self_capacitance_coeff:float=100.0) -> np.ndarray:
+def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], mean:float=1.0, std:float=0.15, sensor_total_capacitance_coeff:float=100.0) -> np.ndarray:
     """
         Exponential decay model for the capacitance matrix.
     """
@@ -178,11 +178,11 @@ def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], m
     C_dd = C_dd_prime + np.sum(C_dg, axis=1)*np.eye(K) + (np.sum(C_dd_prime, axis=1)-np.diag(C_dd_prime))*np.eye(K) 
 
     # Set/Increase the self-capacitance of the sensors
-    if sensor_self_capacitance_coeff is not None and sensor_self_capacitance_coeff > 0:
-        mask[:-S, :-S]  = False
+    if sensor_total_capacitance_coeff is not None and sensor_total_capacitance_coeff > 0:
         mask = np.eye(C_dd.shape[0], dtype=bool)
+        mask[:-S, :-S]  = False
     
-        C_dd[mask] = sensor_self_capacitance_coeff
+        C_dd[mask] = sensor_total_capacitance_coeff
         # C_dd[mask] = sensor_self_capacitance_coeff
     
     return C_dd, C_dg
@@ -257,6 +257,19 @@ def get_all_euclidean_cuts(config_tuple):
             k+=1
 
     return cuts 
+
+def plot_csd_from_sensor(sensor_output, cut=None, sensor_channel=0):
+    plt.figure(figsize=(RESOLUTION/DPI, RESOLUTION/DPI), dpi=DPI)
+    ax = plt.gca()
+    plt.tight_layout(pad=0)
+    plt.axis('off')
+
+    if cut is not None:
+        ax.pcolormesh(sensor_output[cut,:,:,sensor_channel].squeeze())
+    else:
+        ax.pcolormesh(sensor_output[:,:,sensor_channel].squeeze())
+
+    return plt.gcf(), ax
 
 def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesks: list[np.ndarray], 
              only_edges:bool=True, only_labels:bool=True, res:int=RESOLUTION, dpi:int=DPI):
@@ -543,7 +556,7 @@ def clean_batch():
             print("Unable to clean empty batch folder!")
             print(f'{e}')
 
-def save_img_csd(config_tuple, csd_plot, cut):
+def save_img_csd(config_tuple, csd_plot, cuts):
     """
     Save the CSD image as a PNG file with a unique name.
     
@@ -557,6 +570,9 @@ def save_img_csd(config_tuple, csd_plot, cut):
     """
     K, N, S = config_tuple
     
+    if isinstance(csd_plot, list):
+        csd_plot = np.array(csd_plot)
+
     # Generate base name
     base_name = ''.join([str(random.randint(0, 9)) for _ in range(10)])
     
@@ -565,44 +581,111 @@ def save_img_csd(config_tuple, csd_plot, cut):
     ensure_path(group_dir)
 
     saved_files = []
-
+    
     # Handle multiple cuts
-    for cut_idx in range(len(cut)):
+    for cut_idx in range(len(cuts)):
         # Add cut indices to name
-        indices = [np.argwhere(c == 1).squeeze().tolist() for c in cut[cut_idx]]
+        indices = [np.argwhere(c == 1).squeeze().tolist() for c in cuts[cut_idx]]
         cut_name = '_'+''.join(str(i) for i in indices)
-        
-        if S > 0 and len(csd_plot.shape) > 3:  # Multiple sensors
+        print(f"Shape of csd_plot: {csd_plot.shape}")
+
+
+        if S > 0:  # Handle sensor data
             for sensor_idx in range(csd_plot.shape[-1]):
                 img_name = f"{base_name}{cut_name}_s{sensor_idx}.png"
                 full_path_img = os.path.join(group_dir, img_name)
-                
+                    
                 fig = plt.figure(figsize=(c.RESOLUTION/c.DPI, c.RESOLUTION/c.DPI), dpi=c.DPI)
-                plt.imshow(csd_plot[cut_idx, :, :, sensor_idx])
+                plt.pcolormesh(csd_plot[cut_idx, :, :, sensor_idx])
                 plt.axis('off')
                 plt.tight_layout(pad=0)
-                
+                    
                 plt.savefig(full_path_img, format='png', bbox_inches='tight', 
-                           pad_inches=0, dpi=c.DPI)
+                            pad_inches=0, dpi=c.DPI)
                 plt.close(fig)
-                
+                    
                 saved_files.append((full_path_img, img_name))
-        else:  # Single sensor or no sensors
+        else:  # No sensors
             img_name = f"{base_name}{cut_name}.png"
             full_path_img = os.path.join(group_dir, img_name)
             
-            fig = plt.figure(figsize=(c.RESOLUTION/c.DPI, c.RESOLUTION/c.DPI), dpi=c.DPI)
-            plt.imshow(csd_plot[cut_idx])
-            plt.axis('off')
-            plt.tight_layout(pad=0)
+            if isinstance(csd_plot, (list, np.ndarray)):
+                data_to_plot = csd_plot[cut_idx] if isinstance(csd_plot, np.ndarray) else csd_plot[cut_idx][0]
+                fig = plt.figure(figsize=(c.RESOLUTION/c.DPI, c.RESOLUTION/c.DPI), dpi=c.DPI)
+                plt.pcolormesh(data_to_plot)
+                plt.axis('off')
+                plt.tight_layout(pad=0)
+                plt.savefig(full_path_img, format='png', bbox_inches='tight', 
+                          pad_inches=0, dpi=c.DPI)
+                plt.close(fig)
+            else:
+                csd_plot.savefig(full_path_img, format='png', bbox_inches='tight', 
+                               pad_inches=0, dpi=c.DPI)
+                plt.close(csd_plot)
             
-            plt.savefig(full_path_img, format='png', bbox_inches='tight', 
-                       pad_inches=0, dpi=c.DPI)
+            saved_files.append((full_path_img, img_name))
+    
+    return base_name, saved_files 
+
+def save_img_csd_from_figs(config_tuple, figs, cuts):
+    """
+    Save matplotlib figures with unique names.
+    
+    Args:
+        config_tuple (tuple): (K, N, S) configuration
+        figs (list): List of matplotlib figures for each cut and sensor
+        cuts (np.ndarray): Array of cuts used to generate the CSDs
+    
+    Returns:
+        tuple: (base_name, list of (path, name) for saved images)
+    """
+    K, N, S = config_tuple
+    
+    # Generate base name
+    base_name = ''.join([str(random.randint(0, 9)) for _ in range(10)])
+    
+    # Create directory for this group
+    group_dir = os.path.join(PATH_IMG, base_name)
+    ensure_path(group_dir)
+    
+    saved_files = []
+    
+    if S > 0:  # Handle sensor data
+        fig_idx = 0
+        for cut_idx in range(len(cuts)):
+            # Add cut indices to name
+            indices = [np.argwhere(c == 1).squeeze().tolist() for c in cuts[cut_idx]]
+            cut_name = '_'+''.join(str(i) for i in indices)
+            
+            # Save figure for each sensor
+            for sensor_idx in range(S):
+                img_name = f"{base_name}{cut_name}_s{sensor_idx}.png"
+                full_path_img = os.path.join(group_dir, img_name)
+                
+                # Save the figure
+                figs[fig_idx].savefig(full_path_img, format='png', 
+                                    bbox_inches='tight', pad_inches=0, dpi=c.DPI)
+                plt.close(figs[fig_idx])
+                
+                saved_files.append((full_path_img, img_name))
+                fig_idx += 1
+    else:  # No sensors
+        for cut_idx, fig in enumerate(figs):
+            # Add cut indices to name
+            indices = [np.argwhere(c == 1).squeeze().tolist() for c in cuts[cut_idx]]
+            cut_name = '_'+''.join(str(i) for i in indices)
+            
+            img_name = f"{base_name}{cut_name}.png"
+            full_path_img = os.path.join(group_dir, img_name)
+            
+            # Save the figure
+            fig.savefig(full_path_img, format='png', 
+                       bbox_inches='tight', pad_inches=0, dpi=c.DPI)
             plt.close(fig)
             
             saved_files.append((full_path_img, img_name))
     
-    return base_name, saved_files
+    return base_name, saved_files 
 
 # TODO: Figure out how to save the data in multiple files after 500 datapoints generation
 #     - thats for safety 
@@ -634,43 +717,74 @@ def save_to_json(dictionary: dict):
 
 def save_to_hfd5(dictionary: dict):
     """
-    Save the datapoints to an HDF5 file.
+    Save the datapoints to an HDF5 file with organized group structure.
+    
+    Structure:
+    base_name/
+        ├── attributes (K, N, S, etc.)
+        ├── C_DD/
+        ├── C_DG/
+        ├── x_vol/
+        ├── y_vol/
+        ├── cuts/
+        ├── sensor_output/
+        ├── csd/
+        ├── csd_gradient/
+        ├── device/
+        └── sensors_coordinates/
     """
     full_path_dps = os.path.join(PATH_DPS, 'datapoints.h5')
 
     with h5py.File(full_path_dps, 'a') as f:
-        for key, value in dictionary.items():
-            if key in f:
-                del f[key]  # Delete existing group if it exists
+        for img_name, value in dictionary.items():
+            base_name = value['base_name']
             
-            group = f.create_group(key)
-            cuts_group = group.create_group('cuts')
-
-            # Save metadata
-            for meta_key in ['K', 'N', 'S', 'tunnel_coupling_const', 'slow_noise_amplitude', 'fast_noise_amplitude',
-                            'p_dd', 'p_dg', 'd_DD', 'd_DG', 'r_min', 'r_max', 'base_name']:
-                if meta_key in value:
-                    group.attrs[meta_key] = value[meta_key]
+            # Create main group if it doesn't exist
+            if base_name in f:
+                del f[base_name]  # Delete existing group if it exists
+            main_group = f.create_group(base_name)
             
-            # Save matrices
-            for matrix_key in ['C_DD', 'C_DG', 'device', 'sensors_coordinates']:
-                if matrix_key in value:
-                    group.create_dataset(matrix_key, data=value[matrix_key])
+            # Save attributes
+            attributes = [
+                'K', 'N', 'S', 
+                'tunnel_coupling_const', 
+                'slow_noise_amplitude', 
+                'fast_noise_amplitude',
+                'ks',
+                'p_dd', 'p_dg',
+                'd_DD', 'd_DG',
+                'r_min', 'r_max'
+            ]
             
-            # Save voltage ranges
-            for vol_key in ['x_vol', 'y_vol']:
-                if vol_key in value:
-                    group.create_dataset(vol_key, data=value[vol_key])
+            for attr in attributes:
+                if attr in value:
+                    main_group.attrs[attr] = value[attr]
             
-            # Save cuts and related data
-            for cut_idx in range(len(value['cuts'])):
-                cut_group = cuts_group.create_group(f'cut_{cut_idx}')
-                cut_group.create_dataset('cut', data=value['cuts'][cut_idx])
-                cut_group.create_dataset('csd', data=value['csd'][cut_idx])
-                cut_group.create_dataset('poly', data=value['poly'][cut_idx])
-                cut_group.create_dataset('sensor_output', data=value['sensor_output'][cut_idx])
-                if value.get('csd_gradient') is not None:
-                    cut_group.create_dataset('csd_gradient', data=value['csd_gradient'][cut_idx])
+            # Create datasets for matrices and arrays
+            datasets = {
+                'C_DD': value['C_DD'],
+                'C_DG': value['C_DG'],
+                'x_vol': value['x_vol'],
+                'y_vol': value['y_vol'],
+                'cuts': value['cuts'],
+                'sensor_output': value['sensor_output'],
+                'csd': value['csd'],
+                'csd_gradient': value['csd_gradient'],
+                'device': value['device'],
+                'sensors_coordinates': value['sensors_coordinates']
+            }
+            
+            # Save each dataset in its own group
+            for name, data in datasets.items():
+                if data is not None:  # Only save if data exists
+                    data_group = main_group.create_group(name)
+                    if name in ['cuts', 'csd', 'sensor_output', 'csd_gradient']:
+                        # These might have multiple items
+                        for idx, item in enumerate(data):
+                            data_group.create_dataset(f'item_{idx}', data=item)
+                    else:
+                        # Single item datasets
+                        data_group.create_dataset('data', data=data)
 
 def get_batch_folder_name(batch_num: int, config_tuple: tuple[int, int, int]):
     """
@@ -747,24 +861,23 @@ def reconstruct_img_with_matrices(batch_num: int, img_name: str, config_tuple: t
         
         return img, C_DD, C_DG
     
-def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, poly, csd, sensor_output, csd_plot, csd_gradient, device, sensors_coordinates):
+def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, poly, csd, sensor_output, csd_plots, csd_gradient, device, sensors_coordinates):
     """
     Combine all 'saving' functions to create a datapoint.
     """
     K, N, S = config_tuple
    
     # save img of CSD 
-    base_name, saved_files = save_img_csd(config_tuple, csd_plot, cuts)
+    # base_name, saved_files = save_img_csd(config_tuple, csd_plot, cuts)
+    base_name, saved_files = save_img_csd_from_figs(config_tuple, csd_plots, cuts)
    
     # Create tensors for each cut
     csd_tensors = []
-    gradient_tensors = []
-
     for (fpi, img_name) in saved_files:
         # save datapoints
         csd = Image.open(fpi)
         csd_array = np.array(csd)
-        
+
         # Handle grayscale images (2D) vs RGB images (3D)
         if len(csd_array.shape) == 2:
             # If grayscale, add channel dimension
@@ -774,33 +887,18 @@ def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, poly, csd,
             csd_tensor = torch.tensor(csd_array).permute(2, 0, 1)
         csd_tensors.append(csd_tensor)
         
-        # Handle gradient data similarly
-        if len(csd_gradient.shape) == 2:
-            csd_gradient_tensor = torch.tensor(csd_gradient[None, :, :])
-        else:
-            csd_gradient_tensor = torch.tensor(csd_gradient).permute(2, 0, 1)
-        gradient_tensors.append(csd_gradient_tensor)
-
-    ks = np.nan if ks is None else ks
+    if isinstance(csd_gradient, list):
+        csd_gradient = np.array(csd_gradient)
+        
     datapoints_dict = {img_name: {
+        # Metadata attributes
         'K': K, 
         'N': N,
         'S': S,
         'tunnel_coupling_const': c.tunnel_coupling_const,
         'slow_noise_amplitude': c.slow_noise_amplitude,
         'fast_noise_amplitude': c.fast_noise_amplitude,
-        'C_DD': C_DD, 
-        'C_DG': C_DG, 
-        'ks': ks,
-        'x_vol': np.array(x_vol), 
-        'y_vol': np.array(y_vol), 
-        'cuts': np.array(cuts), 
-        'poly': poly,
-        'sensor_output': sensor_output,
-        'csd': csd_tensor,
-        'csd_gradient': csd_gradient_tensor,
-        'device': device,
-        'sensors_coordinates': sensors_coordinates,
+        'ks': np.nan if ks is None else ks,
         'p_dd': c.p_dd,
         'p_dg': c.p_dg,
         'd_DD': c.d_DD,
@@ -808,7 +906,19 @@ def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, poly, csd,
         'r_min': c.r_min,
         'r_max': c.r_max,
         'base_name': base_name,
-    }} # 23 elements
+        
+        # Dataset groups
+        'C_DD': C_DD,
+        'C_DG': C_DG,
+        'x_vol': np.array(x_vol),
+        'y_vol': np.array(y_vol),
+        'cuts': np.array(cuts),
+        'sensor_output': sensor_output if sensor_output is not None else np.array([]),
+        'csd': csd_tensors,
+        'csd_gradient': csd_gradient,
+        'device': device,
+        'sensors_coordinates': sensors_coordinates if sensors_coordinates is not None else np.array([])
+    }} # 24 elements 
     
     save_to_hfd5(datapoints_dict)
 

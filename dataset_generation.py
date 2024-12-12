@@ -60,7 +60,6 @@ def main():
     const_sensors_radius = args.const_sensors_radius
     cut = args.cut
 
-
     if system_name == "fixed_4_2":
         device = np.ones((2,2))
         sensors_angle = [0, 3/2*np.pi]
