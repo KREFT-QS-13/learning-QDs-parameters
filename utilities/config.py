@@ -5,8 +5,8 @@ import numpy as np
 PATH_0 = "./"
 # PATH_0 = "../../data1/Project_data_and_results/"
 
-# PATH_TO_DATASETS = "datasets/"
-PATH_TO_DATASETS = "ALICE/"
+PATH_TO_DATASETS = "datasets/"
+# PATH_TO_DATASETS = "ALICE/"
 
 PATH_TO_RESULTS = "Results/"
 
@@ -23,7 +23,7 @@ p_dg = 0.2
 
 
 # mag_list = [5,6,8, 9, 10, 11, 12, 13, 14, 15]
-mag_list = [4,5]
+mag_list = [6, 6.5, 7, 7.5]
 
 
 tunnel_coupling_const = 100*1e-6    

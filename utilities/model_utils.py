@@ -938,7 +938,7 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
 
 
 # ----------------------------- EVALUATION
-def explain_output(config_tuple, model_path, input_tensor):
+def explain_output(config_tuple, model_path, model_name, input_tensor):
     """
     Load a model and create explanatory visualizations (saliency map and Grad-CAM) for a given input.
     For regression, we'll visualize the gradients with respect to the mean of all outputs.
@@ -959,10 +959,12 @@ def explain_output(config_tuple, model_path, input_tensor):
     input_tensor = input_tensor.to(c.DEVICE)
     
     # Load model architecture and weights
-    if 'resnet' in model_path.lower():
-        model = ResNet(name="ResNet_cnn")
-    else:
-        model = VanillaCNN(name="vanilla_cnn")
+    # if 'resnet' in model_path.lower():
+    #     model = ResNet(name="ResNet_cnn")
+    # else:
+    #     model = VanillaCNN(name="vanilla_cnn")
+    
+    model = ResNet(base_model=model_name, config_tuple=config_tuple,  custom_head=[2048, 1024], dropout=0.2)
     
     # Load state dict with better error handling
     try:
@@ -980,6 +982,8 @@ def explain_output(config_tuple, model_path, input_tensor):
     model = model.to(c.DEVICE)
     model.eval()
     
+    print(f"Type of input tensor: {type(input_tensor)}, shape: {input_tensor.shape}")
+
     # Get model prediction
     with torch.no_grad():
         prediction = model(input_tensor)
@@ -1131,29 +1135,29 @@ def overlay_heatmap_on_image(image: torch.Tensor, heatmap: np.ndarray, alpha: fl
 
 # TODO: Rewrite this function to work without need of c.K, but with config tuple
 def generate_csd_from_prediction(config_tuple, prediction):
-    return NotImplementedError()
-#     C_DD, C_DG = reconstruct_capacitance_matrices(prediction, config_tuple[0])
-#     capacitance_config = {
-#         "C_DD" : C_DD,  #dot-dot capacitance matrix
-#         "C_Dg" : C_DG,  #dot-gate capacitance matrix
-#         "ks" : None,       
-#     }
+    # return NotImplementedError()
+    C_DD, C_DG = reconstruct_capacitance_matrices(output=prediction, config_tuple=config_tuple)
+    capacitance_config = {
+        "C_DD" : C_DD,  #dot-dot capacitance matrix
+        "C_Dg" : C_DG,  #dot-gate capacitance matrix
+        "ks" : None,       
+    }
 
-#     cuts = u.get_cut(config_tuple[0])
-#     # x_vol = np.linspace(-c.V_G, c.V_G, c.RESOLUTION)
-#     x_vol = np.linspace(0, 0.05, c.RESOLUTION)
-#     y_vol = np.linspace(0, 0.05, c.RESOLUTION)
+    cuts = u.get_cut(config_tuple)
+    # x_vol = np.linspace(-c.V_G, c.V_G, c.RESOLUTION)
+    x_vol = np.linspace(0, 0.05, c.RESOLUTION)
+    y_vol = np.linspace(0, 0.05, c.RESOLUTION)
 
-#     xks, yks, csd_dataks, polytopesks, _, _ =  Experiment(capacitance_config).generate_CSD(
-#                                                 x_voltages = x_vol,  #V
-#                                                 y_voltages = y_vol,  #V
-#                                                 plane_axes = cuts,
-#                                                 compute_polytopes = True,
-#                                                 use_virtual_gates = False)   
+    xks, yks, csd_dataks, polytopesks, _, _ =  Experiment(capacitance_config).generate_CSD(
+                                                x_voltages = x_vol,  #V
+                                                y_voltages = y_vol,  #V
+                                                plane_axes = cuts,
+                                                compute_polytopes = True,
+                                                use_virtual_gates = False)   
     
-#     pred_csd = u.plot_CSD(xks, yks, csd_dataks, polytopesks)
+    pred_csd = u.plot_CSD(xks, yks, csd_dataks, polytopesks)
 
-#     return pred_csd
+    return pred_csd
 
 def load_conv_weights(model, path):
     """

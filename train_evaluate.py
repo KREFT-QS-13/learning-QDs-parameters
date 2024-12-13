@@ -37,24 +37,7 @@ def main():
     else:
         print(f"CUDA is not available. Using CPU. (device: {c.DEVICE})")
     
-    start_time = time.time()
-    # Load your data
-    print("Loading and preparing datasets...")
     
-    datasize_cut = 50000
-    # for training with csd images:
-    # X, y = mu.prepare_data(config_tuple, datasize_cut=datasize_cut, param_names=['csd', 'C_DD', 'C_DG'])
-    # param_names = ['csd', 'C_DD', 'C_DG']
-    # for training with csd gradients:
-    X, y = mu.prepare_data(config_tuple, datasize_cut=datasize_cut, param_names=['csd_gradient', 'C_DD', 'C_DG'])
-    param_names = ['csd_gradient', 'C_DD', 'C_DG']
-
-    # for testing with csd images:
-    # X, y = mu.prepare_data(config_tuple, all_batches=False, batches=np.arange(1,11))
-    # param_names = ['csd_gradient', 'C_DD', 'C_DG']
-   
-    print(f'Successfully prepared {len(X)} datapoints with input size {c.RESOLUTION}x{c.RESOLUTION}.\n')
-    print(f'Time taken: {time.time() - start_time:.2f} seconds')
     # Define model configurations
     model_configs = [
         # { 
@@ -92,14 +75,38 @@ def main():
         #         'filters_per_layer': [16, 32, 64, 128],
         #     }
         # },
-        {
+        # {
+        #     'model': ResNet, 
+        #     'params': {
+        #         'config_tuple': config_tuple,
+        #         'name': 'resnet18_model',
+        #         'base_model': 'resnet18',
+        #         'pretrained': True,
+        #         'dropout': 0.25,
+        #         'custom_head': [2048, 1024],
+        #         'filters_per_layer': None,
+        #     }
+        # },
+        #         {
+        #     'model': ResNet, 
+        #     'params': {
+        #         'config_tuple': config_tuple,
+        #         'name': 'resnet18_model',
+        #         'base_model': 'resnet18',
+        #         'pretrained': True,
+        #         'dropout': 0.1,
+        #         'custom_head': [2048, 1024],
+        #         'filters_per_layer': None,
+        #     }
+        # },
+                        {
             'model': ResNet, 
             'params': {
                 'config_tuple': config_tuple,
                 'name': 'resnet18_model',
                 'base_model': 'resnet18',
                 'pretrained': True,
-                'dropout': 0.2,
+                'dropout': 0.1,
                 'custom_head': [2048, 1024],
                 'filters_per_layer': None,
             }
@@ -115,7 +122,7 @@ def main():
         # },
     ]
 
-    # model_configs = model_configs*2
+    # model_configs = model_configs*4
 
     # Define training parameters for each model
     train_params_list = [
@@ -154,35 +161,41 @@ def main():
         #     'regularization_coeff':  1.25,
         #     'criterion': nn.MSELoss(),
         # },
-        # {   
-        #     'batch_size': 128,
-        #     'epochs': 10, 
-        #     'learning_rate': 0.001,
-        #     'val_split': 0.2,
-        #     'test_split': 0.2,
-        #     'random_state': 42,
-        #     'epsilon': 0.5,
-        #     'init_weights': None, 
-        #     'regularization_coeff': 1.25,
-        #     'criterion': nn.MSELoss(),
-        #  },
         {   
-            'batch_size': 128,
-            'epochs': 10, 
-            'learning_rate': 0.0005,
-            'val_split': 0.2,
-            'test_split': 0.2,
-            'random_state': 42,
-            'epsilon': 0.5,
-            'init_weights': None, 
-            'regularization_coeff': 1.5,
-            'criterion': nn.MSELoss(),
-         },
-         
+            "batch_size": 64,
+            "epochs": 25,
+            "learning_rate": 0.0005,
+            "val_split": 0.2,
+            "test_split": 0.2,
+            "random_state": 42,
+            "epsilon": 0.5,
+            "init_weights": None,
+            "regularization_coeff": 1.75,
+            "criterion": nn.MSELoss(),
+         },         
     ]  
     # train_params_list = train_params_list
-
     assert len(model_configs) == len(train_params_list), "Number of model configurations and training parameters must match."
+    
+    start_time = time.time()
+    # Load your data
+    print("Loading and preparing datasets...")
+    
+    datasize_cut = 50000
+    # for training with csd images:
+    X, y = mu.prepare_data(config_tuple, datasize_cut=datasize_cut, param_names=['csd', 'C_DD', 'C_DG'])
+    param_names = ['csd', 'C_DD', 'C_DG']
+    # for training with csd gradients:
+    # X, y = mu.prepare_data(config_tuple, datasize_cut=datasize_cut, param_names=['csd_gradient', 'C_DD', 'C_DG'])
+    # param_names = ['csd_gradient', 'C_DD', 'C_DG']
+
+    # for testing with csd images:
+    # X, y = mu.prepare_data(config_tuple, all_batches=False, batches=np.arange(1,11))
+    # param_names = ['csd_gradient', 'C_DD', 'C_DG']
+   
+    print(f'Successfully prepared {len(X)} datapoints with input size {c.RESOLUTION}x{c.RESOLUTION}.\n')
+    print(f'Time taken: {time.time() - start_time:.2f} seconds')
+    
     # Combine model configurations with their respective training parameters
     models_configs = [{'model_config': mc, 'train_params': tp} for mc, tp in zip(model_configs, train_params_list)]
 

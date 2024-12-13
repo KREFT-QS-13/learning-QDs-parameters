@@ -158,7 +158,7 @@ def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], m
     
     # mag_conts = np.random.choice(c.mag_list, size=K)
     mag_const = np.random.choice(c.mag_list)
-    mag_consts = np.abs(np.random.normal(loc=mag_const, scale=1, size=K))
+    mag_consts = np.abs(np.random.normal(loc=mag_const, scale=0.5, size=K))
     
     C_dd_prime, C_dg = np.identity(K), np.identity(K)
     C_dd_prime[np.eye(C_dd_prime.shape[0], dtype=bool)] = [round(np.random.normal(c*mean, c*std), 4) for c in mag_consts]
@@ -291,43 +291,43 @@ def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesk
                list of (figure, axis) if 3D input
     """
 
-    # if len(csd_or_sensor.shape) > 3:
     # Handle 3D array (multiple channels)
-    figures_and_axes = []
-    for cut in range(csd_or_sensor.shape[0]):
-        for channel in range(csd_or_sensor.shape[-1]):
-            plt.figure(figsize=(res/dpi, res/dpi), dpi=dpi)
-            ax = plt.gca()
-        
-            ax.pcolormesh(1e3*x, 1e3*y, csd_or_sensor[cut,:,:,channel].squeeze())
-                
-            # print(polytopesks, len(polytopesks))
-            plot_polytopes(ax, polytopesks[cut], axes_rescale=1e3, 
-                            only_edges=only_edges, only_labels=only_labels)
-                
-            ax.set_xlim(x[0]*1e3, x[-1]*1e3)
-            ax.set_ylim(y[0]*1e3, y[-1]*1e3)
-            ax.axis('off')
-            plt.tight_layout(pad=0)
-                
-            figures_and_axes.append((plt.gcf(), ax))
+    if len(csd_or_sensor.shape) == 4:
+        figures_and_axes = []
+        for cut in range(csd_or_sensor.shape[0]):
+            for channel in range(csd_or_sensor.shape[-1]):
+                plt.figure(figsize=(res/dpi, res/dpi), dpi=dpi)
+                ax = plt.gca()
             
-    return figures_and_axes
-    # else:
-    #     # Original behavior for 2D array
-    #     plt.figure(figsize=(res/dpi, res/dpi), dpi=dpi)
-    #     ax = plt.gca()
+                ax.pcolormesh(1e3*x, 1e3*y, csd_or_sensor[cut,:,:,channel].squeeze())
+                    
+                # print(polytopesks, len(polytopesks))
+                plot_polytopes(ax, polytopesks[cut], axes_rescale=1e3, 
+                                only_edges=only_edges, only_labels=only_labels)
+                    
+                ax.set_xlim(x[0]*1e3, x[-1]*1e3)
+                ax.set_ylim(y[0]*1e3, y[-1]*1e3)
+                ax.axis('off')
+                plt.tight_layout(pad=0)
+                    
+                figures_and_axes.append((plt.gcf(), ax))
+                
+        return figures_and_axes
+    else:
+        # Original behavior for 2D array
+        plt.figure(figsize=(res/dpi, res/dpi), dpi=dpi)
+        ax = plt.gca()
 
-    #     ax.pcolormesh(1e3*x, 1e3*y, csd_or_sensor)
-    #     plot_polytopes(ax, polytopesks, axes_rescale=1e3, 
-    #                   only_edges=only_edges, only_labels=only_labels)
+        ax.pcolormesh(1e3*x, 1e3*y, csd_or_sensor)
+        plot_polytopes(ax, polytopesks, axes_rescale=1e3, 
+                      only_edges=only_edges, only_labels=only_labels)
 
-    #     ax.set_xlim(x[0]*1e3, x[-1]*1e3)
-    #     ax.set_ylim(y[0]*1e3, y[-1]*1e3)
-    #     ax.axis('off')
-    #     plt.tight_layout(pad=0)
+        ax.set_xlim(x[0]*1e3, x[-1]*1e3)
+        ax.set_ylim(y[0]*1e3, y[-1]*1e3)
+        ax.axis('off')
+        plt.tight_layout(pad=0)
 
-    #     return plt.gcf(), ax
+        return plt.gcf(), ax
 
 def get_mask(device: np.ndarray, config_tuple: tuple[int, int, int]) -> np.ndarray:
     """

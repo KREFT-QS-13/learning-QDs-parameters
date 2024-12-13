@@ -53,6 +53,9 @@ def main():
     N_batch = args.N
     R = args.R
     K = args.K
+    S = args.S
+    N_dots = K-S if S>0 else K
+    device = args.device
     sensors_radius = args.sensors_radius
     sensors_angle = args.sensors_angle
     system_name = args.system_name
@@ -68,7 +71,7 @@ def main():
         S = 2
         N_dots = len(u.get_dots_indices(device))
         all_euclidean_cuts = True
-    else:
+    elif system_name is not None:
         raise ValueError(f"System name {system_name} not recognized. Not defined in dataset_generation.py.")
 
     # TODO: check and sanitize the flags a nd input to the generate_dataset function
