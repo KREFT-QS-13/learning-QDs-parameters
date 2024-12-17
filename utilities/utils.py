@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import torchvision.transforms as transforms
 import torch
+import multiprocessing as mp
 
 import os, time
 import sys
@@ -391,6 +392,50 @@ def generate_experiment_config(C_DD:np.ndarray, C_DG:np.ndarray, config_tuple:tu
 
     return capacitance_config, tunneling_config, sensor_config
 
+def process_cut(args):
+    """Process a single cut in parallel"""
+    current_cut, C_DD, C_DG, config_tuple, device, x_vol, y_vol, use_sensor_signal = args
+    K, N, S = config_tuple
+   
+    try:
+        target_state = np.zeros(K, dtype=int) + 1
+        target_state[-S:] = 5
+        target_transition = current_cut[0] - current_cut[1]
+        
+        if S == 0:
+            capacitance_config, _, _ = generate_experiment_config(C_DD, C_DG, config_tuple, device)
+            experiment = Experiment(capacitance_config)
+            result = experiment.generate_CSD(
+                x_voltages=x_vol,
+                y_voltages=y_vol,
+                plane_axes=current_cut,
+            )
+        else:
+            experiment = Experiment(*generate_experiment_config(C_DD, C_DG, config_tuple, device))
+            result = experiment.generate_CSD(
+                x_voltages=x_vol,
+                y_voltages=y_vol,
+                target_state=target_state,
+                target_transition=target_transition,
+                plane_axes=current_cut,
+                compute_polytopes=True,
+                use_sensor_signal=use_sensor_signal,
+            )
+            
+        if result is None:
+            print(f"process_cut returned None for cut {current_cut}")
+            return None
+        
+            
+        xks, yks, csd_dataks, polytopesks, sensor, _ = result
+        return (xks, yks, csd_dataks, polytopesks, sensor)
+        
+    except Exception as e:
+        print(f"Error in cut processing: {e}")
+        print(f"Traceback: {traceback.format_exc()}")
+        return None
+   
+
 def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.ndarray=None, 
                      config_tuple:tuple[int,int,int]=None, sensors_radius:list[float]=None, 
                      sensors_angle:list[float]=None, const_sensor_r=False, cut:np.ndarray=None,
@@ -424,55 +469,35 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
                 return None
             
         use_sensor_signal = S > 0
+               
+        # Process cuts in parallel using ThreadPoolExecutor
+        from concurrent.futures import ThreadPoolExecutor
         
+        cut_args = [(cuts[i], C_DD, C_DG, config_tuple, device, x_vol, y_vol, use_sensor_signal) 
+                   for i in range(cuts.shape[0])]
+        
+        with ThreadPoolExecutor(max_workers=mp.cpu_count()) as executor:
+            results = list(executor.map(process_cut, cut_args))
+            
+        # Filter out None results and organize data
+        valid_results = [r for r in results if r is not None]
+        if not valid_results:
+            return None
+
+        xks = valid_results[0][0]
+        yks = valid_results[0][1]
+
+        valid_results = [vr[2:] for vr in valid_results]
+
         all_csd_data = []
         all_polytopes = []
         all_sensor_data = []
         
-        for cut_idx in range(cuts.shape[0]):
-            current_cut = cuts[cut_idx] if cuts.shape[0] > 1 else cuts[0]
-            target_state = np.zeros(K, dtype=int) + 1
-            target_state[-S:] = 5
-            target_transition = current_cut[0] - current_cut[1]
-            
-            try:
-                if S == 0:
-                    capacitance_config, _, _ = generate_experiment_config(C_DD, C_DG, config_tuple, device)
-                    experiment = Experiment(capacitance_config)
-                    result = experiment.generate_CSD(
-                        x_voltages=x_vol,
-                        y_voltages=y_vol,
-                        plane_axes=current_cut,
-                    )
-                else:
-                    experiment = Experiment(*generate_experiment_config(C_DD, C_DG, config_tuple, device))
-                    result = experiment.generate_CSD(
-                        x_voltages=x_vol,
-                        y_voltages=y_vol,
-                        target_state=target_state,
-                        target_transition=target_transition,
-                        plane_axes=current_cut,
-                        compute_polytopes=True,
-                        use_sensor_signal=use_sensor_signal,
-                    )
-                
-                if result is None:
-                    print(f"generate_CSD returned None for cut {cut_idx}")
-                    continue
-                    
-                xks, yks, csd_dataks, polytopesks, sensor, _ = result
-                
-                all_csd_data.append(csd_dataks)
-                all_polytopes.append(polytopesks)
-                all_sensor_data.append(sensor if sensor is not None else None)
-                
-            except Exception as e:
-                print(f"Error in experiment generation for cut {cut_idx}: {e}")
-                print(f"Traceback: {traceback.format_exc()}")
-                continue
+        for csd_data, polytope, sensor in valid_results:
+            all_csd_data.append(csd_data)
+            all_polytopes.append(polytope)
+            all_sensor_data.append(sensor if sensor is not None else None)
         
-        if not all_csd_data:  # If no successful generations
-            return None
             
         # Convert lists to arrays
         all_csd_data = np.array(all_csd_data)
