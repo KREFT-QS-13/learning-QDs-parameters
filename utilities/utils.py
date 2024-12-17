@@ -949,11 +949,11 @@ def generate_datapoint(args):
             fig, _ = plot_CSD(x, y, csd, poly, only_labels=False)
             gradient = np.gradient(csd,axis=0)+np.gradient(csd,axis=1)
             return (C_DD, C_DG, ks, cut, x_vol, y_vol, csd, poly, sensor, fig, gradient, device, sensors_coordinates)
-        elif S == 1:
-            fig, _ = plot_CSD(x, y, sensor, poly)
-            gradient = np.gradient(sensor,axis=0)+np.gradient(sensor,axis=1)
-            return (C_DD, C_DG, ks, cut, x_vol, y_vol, csd, poly, sensor, fig, gradient, device, sensors_coordinates)
-        elif S > 1:
+        # elif S == 1:
+        #     fig, _ = plot_CSD(x, y, sensor, poly)
+        #     gradient = np.gradient(sensor,axis=0)+np.gradient(sensor,axis=1)
+        #     return (C_DD, C_DG, ks, cut, x_vol, y_vol, csd, poly, sensor, fig, gradient, device, sensors_coordinates)
+        elif S >= 1:
             figs = [fig for fig, _ in plot_CSD(x, y, sensor, poly)]
             gradients = [np.gradient(s,axis=0)+np.gradient(s,axis=1) for s in sensor]
             return (C_DD, C_DG, ks, cut, x_vol, y_vol, csd, poly, sensor, figs, gradients, device, sensors_coordinates)

@@ -7,8 +7,8 @@ import utilities.config as c
 import utilities.utils as u
 
 def main():
-    x_vol = np.linspace(0, 0.05, c.RESOLUTION)
-    y_vol = np.linspace(0, 0.05, c.RESOLUTION)
+    x_vol = np.linspace(-0.01, 0.05, c.RESOLUTION)
+    y_vol = np.linspace(-0.01, 0.05, c.RESOLUTION)
 
     x_vol_range = (x_vol[-1], len(x_vol))
     y_vol_range = (y_vol[-1], len(y_vol))
