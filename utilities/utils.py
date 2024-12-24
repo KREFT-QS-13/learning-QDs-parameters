@@ -45,6 +45,8 @@ def get_dots_indices(device:np.ndarray) -> list[tuple[int, int]]:
     """
     device = np.asarray(device)
 
+    if device is None:
+        return 0
     if device.ndim != 2:
         raise ValueError(f"Device array must be 2D, got shape {device.shape}, type {type(device)},\n{device}")
     
@@ -102,6 +104,7 @@ def draw_random(S:int, device:np.ndarray, const_sensor_r:bool) -> list[float]:
             list_r0.append(r0)
             list_theta0.append(theta0)
 
+
     if const_sensor_r:
        list_r0 = [list_r0[0]]*S
 
@@ -130,7 +133,7 @@ def get_dist_dot_sensor(r0:float, theta0:float, nx:int, ny:int) -> tuple[float, 
     
     return np.sqrt( r0**2 + r_0i**2 - 2*r0*r_0i*np.cos(theta_si))
 
-def get_device_distance_matrix(device:np.ndarray, sensors:list[tuple[float, float]], config_tuple:tuple[int, int, int]) -> np.ndarray:
+def get_device_distance_matrix(config_tuple:tuple[int, int, int], device:np.ndarray, sensors:list[tuple[float, float]]) -> np.ndarray:
     """
         Get the distance matrix for the device.
     """
@@ -146,50 +149,13 @@ def get_device_distance_matrix(device:np.ndarray, sensors:list[tuple[float, floa
             dist_matrix[i,j] = dist_between_points(system_corr[i], system_corr[j])
             dist_matrix[j,i] = dist_matrix[i,j]
     
-    return dist_matrix
+    dist_matrix_dd = dist_matrix
+    dist_matrix_dg = np.sqrt(dist_matrix_dd**2 + c.d_DG**2)
 
-def exp_decay_model(dist_matrix:np.ndarray, config_tuple:tuple[int, int, int], mean:float=1.0, std:float=0.15, sensor_total_capacitance_coeff:float=100.0) -> np.ndarray:
-    """
-        Exponential decay model for the capacitance matrix.
-    """
-    K, N, S = config_tuple
-    
-    decay = lambda x,p: p**x
-    
-    # mag_conts = np.random.choice(c.mag_list, size=K)
-    mag_const = np.random.choice(c.mag_list)
-    mag_consts = np.abs(np.random.normal(loc=mag_const, scale=0.5, size=K))
-    
-    C_dd_prime, C_dg = np.identity(K), np.identity(K)
-    C_dd_prime[np.eye(C_dd_prime.shape[0], dtype=bool)] = [round(np.random.normal(c*mean, c*std), 4) for c in mag_consts]
-    C_dg[np.eye(C_dg.shape[0], dtype=bool)] = [round(np.random.normal(c*mean, c*std), 4) for c in mag_consts]
+    return dist_matrix_dd, dist_matrix_dg
 
-    C_dd_prime[-1, -1] = 100
-    C_dd_prime[-2, -2] = 100
-
-    for i in range(K):
-        for j in range(i+1, K):
-            C_dd_prime[i,j] = C_dd_prime[j,i] = round(np.sqrt(C_dd_prime[i,i]*C_dd_prime[j,j]) * decay(dist_matrix[i,j]/c.d_DD, c.p_dd), 4)
-            if i < N and j < N:
-                C_dg[i,j] = C_dg[j,i] = round(np.sqrt(C_dd_prime[i,i]*C_dd_prime[j,j])*decay(dist_matrix[i,j]/c.d_DG, c.p_dg), 4)
-            else:
-                C_dg[i,j] = C_dg[j,i] = 0 # No cross-talk between the sensor dot and the target dot.
-
-    C_dd = C_dd_prime + np.sum(C_dg, axis=1)*np.eye(K) + (np.sum(C_dd_prime, axis=1)-np.diag(C_dd_prime))*np.eye(K) 
-
-    # Set/Increase the self-capacitance of the sensors
-    if sensor_total_capacitance_coeff is not None and sensor_total_capacitance_coeff > 0:
-        mask = np.eye(C_dd.shape[0], dtype=bool)
-        mask[:-S, :-S]  = False
-    
-        C_dd[mask] = sensor_total_capacitance_coeff
-        # C_dd[mask] = sensor_self_capacitance_coeff
-    
-    return C_dd, C_dg
-
-
-def generate_capacitance_matrices(config_tuple:tuple[int, int, int]=None, device:np.ndarray=None, const_sensor_r:bool=False,
-                                  sensors_radius:list[float]=None, sensors_angle:list[float]=None) -> tuple[np.ndarray, np.ndarray]:
+def generate_capacitance_matrices(config_tuple:tuple[int, int, int]=None, device:np.ndarray=None, sensors_radius:list[float]=None, 
+                                  sensors_angle:list[float]=None,  const_sensor_r:bool=False, sensor_total_capacitance_coeff:float=100.0) -> tuple[np.ndarray, np.ndarray]:
     """
         Generate random capacitance matrices for a given number of dots K from a normal distribution.
         
@@ -199,35 +165,69 @@ def generate_capacitance_matrices(config_tuple:tuple[int, int, int]=None, device
         The off-diagonal elements of C_DD and C_DG are drawn from a normal distribution 
         with a mean and standard deviation of 10% of mean.
     """
+    dist_decay = lambda d,p: np.exp(-d/p)
     K, N, S = config_tuple
-    mean = 1.0 #aF
-    std = 0.1
-    C_DG = np.random.normal(mean, std, (K,K))
 
-    if S == 0:
+    # Initialize dot-dot capacitance matrix
+    C_DD = np.zeros((K,K))
+    C_DD[np.triu_indices(K, k=1)] = np.random.normal(c.dd_avg, c.dd_std, K*(K-1)//2)
+    
+    # Initialize dot-gate capacitance matrix
+    C_DG = np.diag(np.random.normal(c.dg_avg, c.dg_std, K))
+
+    # Distance decay transformations
+    sensors_corr = set_sensors_positions(S, device, const_sensor_r, sensors_radius, sensors_angle)
+    dist_matrix_dd, dist_matrix_dg = get_device_distance_matrix(config_tuple, device, sensors_corr)
+    
+    C_DD[np.triu_indices(len(C_DD), k=1)] *= dist_decay(dist_matrix_dd[np.triu_indices(len(C_DD), k=1)]/c.d_DD, c.lambda_coeff_dd)
+    
+    for i in range(K):
+        for j in range(i+1, K):
+            C_DG[i,j] = C_DG[j,i] = C_DG[i,i]*dist_decay(dist_matrix_dg[i,j]/c.d_DG, c.lambda_coeff_dg)
+
+    # Final touches: Symmetry, noise
+    C_DD = C_DD + C_DD.T
+    C_DG[np.where(~np.eye(K, dtype=bool))] += np.random.normal(0, 0.1, K*(K-1))
+
+    # No cross-talk between the sensor dot and the target dot.
+    if S > 0:
         for i in range(K):
-            diag_const = np.random.choice(c.mag_list)
+            for j in range(i+1, K):
+                if not (i < N and j < N):
+                    C_DG[i,j] = C_DG[j,i] = 0
+    
+        # sensor total capacitance
+        indices = -np.arange(1,S+1)
+        C_DD[indices, indices] = [sensor_total_capacitance_coeff]*S
 
-            C_DG[i,i] = np.random.normal(diag_const*mean, diag_const*std)
-        
-            C_m = np.zeros((K, K)) 
-            mask = ~np.eye(C_m.shape[0], dtype=bool)
-            C_m[mask] = np.random.normal(mean, std, K*(K-1))
+    C_DG = np.round(C_DG, 6)
+    C_DD = np.round(C_DD, 6)
 
-            C_m = (C_m + C_m.T)/2
+    if (C_DG < 0).any():
+        C_DG = np.abs(C_DG)
+    
+    if (C_DD < 0).any():
+        C_DD = np.abs(C_DD)
+    
+    return C_DD, C_DG, sensors_corr
 
-        C_DD = np.sum(C_DG, axis=1).T*np.eye(K) + C_m
-        return C_DD, C_DG, None
-    elif S>0 and device is not None:
-        sensors = set_sensors_positions(S, device, const_sensor_r, sensors_radius, sensors_angle)
-        dist_matrix = get_device_distance_matrix(device, sensors, config_tuple)
+def get_maxwell_capacitance_matrices(C_DD:np.ndarray, C_DG:np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """
+        Get the Maxwell capacitance matrix.
+    """
+    K = len(C_DD)   
+    maxwell_c_dd = np.zeros((K, K))
+    for i in range(K):
+        for j in range(K):
+            if i==j:
+                maxwell_c_dd[i,j] = np.sum(C_DD[i,:]+ C_DG[i,:]) 
+            else:
+                maxwell_c_dd[i,j] = -C_DD[i,j]
+    
+    maxwell_c_dd = np.round(maxwell_c_dd, 6)
+    maxwell_c_dg = np.round(C_DG, 6)
 
-        C_DD, C_DG = exp_decay_model(dist_matrix, config_tuple, mean, std)
-        
-        
-        return C_DD, C_DG, sensors
-    else:
-        raise ValueError("Device is not provided! For noise generation you need to provide the device!")
+    return maxwell_c_dd, maxwell_c_dg
 
 def generate_dummy_data(K:int) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -318,8 +318,8 @@ def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesk
         plt.figure(figsize=(res/dpi, res/dpi), dpi=dpi)
         ax = plt.gca()
 
-        ax.pcolormesh(1e3*x, 1e3*y, csd_or_sensor)
-        plot_polytopes(ax, polytopesks, axes_rescale=1e3, 
+        ax.pcolormesh(1e3*x, 1e3*y, csd_or_sensor.squeeze())
+        plot_polytopes(ax, polytopesks[0], axes_rescale=1e3, 
                       only_edges=only_edges, only_labels=only_labels)
 
         ax.set_xlim(x[0]*1e3, x[-1]*1e3)
@@ -410,7 +410,7 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
         raise ValueError("Device must be provided when using sensors (S > 0)")
         
     try:
-        C_DD, C_DG, sensors_coordinates = generate_capacitance_matrices(config_tuple, device, const_sensor_r, sensors_radius, sensors_angle)
+        C_DD, C_DG, sensors_coordinates = generate_capacitance_matrices(config_tuple, device, sensors_radius, sensors_angle, const_sensor_r)
         
         if cut is None:
             try:
@@ -443,6 +443,7 @@ def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.n
                         x_voltages=x_vol,
                         y_voltages=y_vol,
                         plane_axes=current_cut,
+                        compute_polytopes=True,
                     )
                 else:
                     experiment = Experiment(*generate_experiment_config(C_DD, C_DG, config_tuple, device))
@@ -556,76 +557,76 @@ def clean_batch():
             print("Unable to clean empty batch folder!")
             print(f'{e}')
 
-def save_img_csd(config_tuple, csd_plot, cuts):
-    """
-    Save the CSD image as a PNG file with a unique name.
+# def save_img_csd(config_tuple, csd_plot, cuts):
+#     """
+#     Save the CSD image as a PNG file with a unique name.
     
-    Args:
-        config_tuple (tuple): (K, N, S) configuration
-        csd_plot: Either a single figure or list of figures
-        cut (np.ndarray): Cut array used to generate the CSD
+#     Args:
+#         config_tuple (tuple): (K, N, S) configuration
+#         csd_plot: Either a single figure or list of figures
+#         cut (np.ndarray): Cut array used to generate the CSD
     
-    Returns:
-        tuple: (unique_id, list of (path, name) for saved images)
-    """
-    K, N, S = config_tuple
+#     Returns:
+#         tuple: (unique_id, list of (path, name) for saved images)
+#     """
+#     K, N, S = config_tuple
     
-    if isinstance(csd_plot, list):
-        csd_plot = np.array(csd_plot)
+#     if isinstance(csd_plot, list):
+#         csd_plot = np.array(csd_plot)
 
-    # Generate base name
-    base_name = ''.join([str(random.randint(0, 9)) for _ in range(10)])
+#     # Generate base name
+#     base_name = ''.join([str(random.randint(0, 9)) for _ in range(10)])
     
-    # Create directory for this group
-    group_dir = os.path.join(PATH_IMG, base_name)
-    ensure_path(group_dir)
+#     # Create directory for this group
+#     group_dir = os.path.join(PATH_IMG, base_name)
+#     ensure_path(group_dir)
 
-    saved_files = []
-    
-    # Handle multiple cuts
-    for cut_idx in range(len(cuts)):
-        # Add cut indices to name
-        indices = [np.argwhere(c == 1).squeeze().tolist() for c in cuts[cut_idx]]
-        cut_name = '_'+''.join(str(i) for i in indices)
-        print(f"Shape of csd_plot: {csd_plot.shape}")
+#     saved_files = []
+    # 
+    # # Handle multiple cuts
+    # for cut_idx in range(len(cuts)):
+    #     # Add cut indices to name
+    #     indices = [np.argwhere(c == 1).squeeze().tolist() for c in cuts[cut_idx]]
+    #     cut_name = '_'+''.join(str(i) for i in indices)
+    #     print(f"Shape of csd_plot: {csd_plot.shape}")
 
 
-        if S > 0:  # Handle sensor data
-            for sensor_idx in range(csd_plot.shape[-1]):
-                img_name = f"{base_name}{cut_name}_s{sensor_idx}.png"
-                full_path_img = os.path.join(group_dir, img_name)
+    #     if S > 0:  # Handle sensor data
+    #         for sensor_idx in range(csd_plot.shape[-1]):
+    #             img_name = f"{base_name}{cut_name}_s{sensor_idx}.png"
+    #             full_path_img = os.path.join(group_dir, img_name)
                     
-                fig = plt.figure(figsize=(c.RESOLUTION/c.DPI, c.RESOLUTION/c.DPI), dpi=c.DPI)
-                plt.pcolormesh(csd_plot[cut_idx, :, :, sensor_idx])
-                plt.axis('off')
-                plt.tight_layout(pad=0)
+    #             fig = plt.figure(figsize=(c.RESOLUTION/c.DPI, c.RESOLUTION/c.DPI), dpi=c.DPI)
+    #             plt.pcolormesh(csd_plot[cut_idx, :, :, sensor_idx])
+    #             plt.axis('off')
+    #             plt.tight_layout(pad=0)
                     
-                plt.savefig(full_path_img, format='png', bbox_inches='tight', 
-                            pad_inches=0, dpi=c.DPI)
-                plt.close(fig)
+    #             plt.savefig(full_path_img, format='png', bbox_inches='tight', 
+    #                         pad_inches=0, dpi=c.DPI)
+    #             plt.close(fig)
                     
-                saved_files.append((full_path_img, img_name))
-        else:  # No sensors
-            img_name = f"{base_name}{cut_name}.png"
-            full_path_img = os.path.join(group_dir, img_name)
+    #             saved_files.append((full_path_img, img_name))
+    #     else:  # No sensors
+    #         img_name = f"{base_name}{cut_name}.png"
+    #         full_path_img = os.path.join(group_dir, img_name)
             
-            if isinstance(csd_plot, (list, np.ndarray)):
-                data_to_plot = csd_plot[cut_idx] if isinstance(csd_plot, np.ndarray) else csd_plot[cut_idx][0]
-                fig = plt.figure(figsize=(c.RESOLUTION/c.DPI, c.RESOLUTION/c.DPI), dpi=c.DPI)
-                plt.pcolormesh(data_to_plot)
-                plt.axis('off')
-                plt.tight_layout(pad=0)
-                plt.savefig(full_path_img, format='png', bbox_inches='tight', 
-                          pad_inches=0, dpi=c.DPI)
-                plt.close(fig)
-            else:
-                csd_plot.savefig(full_path_img, format='png', bbox_inches='tight', 
-                               pad_inches=0, dpi=c.DPI)
-                plt.close(csd_plot)
+    #         if isinstance(csd_plot, (list, np.ndarray)):
+    #             data_to_plot = csd_plot[cut_idx] if isinstance(csd_plot, np.ndarray) else csd_plot[cut_idx][0]
+    #             fig = plt.figure(figsize=(c.RESOLUTION/c.DPI, c.RESOLUTION/c.DPI), dpi=c.DPI)
+    #             plt.pcolormesh(data_to_plot)
+    #             plt.axis('off')
+    #             plt.tight_layout(pad=0)
+    #             plt.savefig(full_path_img, format='png', bbox_inches='tight', 
+    #                       pad_inches=0, dpi=c.DPI)
+    #             plt.close(fig)
+    #         else:
+    #             csd_plot.savefig(full_path_img, format='png', bbox_inches='tight', 
+    #                            pad_inches=0, dpi=c.DPI)
+    #             plt.close(csd_plot)
             
-            saved_files.append((full_path_img, img_name))
+    #         saved_files.append((full_path_img, img_name))
     
-    return base_name, saved_files 
+    # return base_name, saved_files 
 
 def save_img_csd_from_figs(config_tuple, figs, cuts):
     """
@@ -645,8 +646,14 @@ def save_img_csd_from_figs(config_tuple, figs, cuts):
     base_name = ''.join([str(random.randint(0, 9)) for _ in range(10)])
     
     # Create directory for this group
-    group_dir = os.path.join(PATH_IMG, base_name)
-    ensure_path(group_dir)
+    if isinstance(figs, list) or isinstance(figs, np.ndarray):
+        if len(figs) > 1:
+            group_dir = os.path.join(PATH_IMG, base_name)
+            ensure_path(group_dir)
+        else:
+            group_dir = PATH_IMG
+    else:
+        group_dir = PATH_IMG
     
     saved_files = []
     
@@ -669,7 +676,7 @@ def save_img_csd_from_figs(config_tuple, figs, cuts):
                 
                 saved_files.append((full_path_img, img_name))
                 fig_idx += 1
-    else:  # No sensors
+    elif isinstance(figs, list) or isinstance(figs, np.ndarray):
         for cut_idx, fig in enumerate(figs):
             # Add cut indices to name
             indices = [np.argwhere(c == 1).squeeze().tolist() for c in cuts[cut_idx]]
@@ -684,6 +691,15 @@ def save_img_csd_from_figs(config_tuple, figs, cuts):
             plt.close(fig)
             
             saved_files.append((full_path_img, img_name))
+    else:
+        fig = figs
+        full_path_img = os.path.join(group_dir, f"{base_name}.png")
+
+        fig.savefig(full_path_img, format='png', 
+                       bbox_inches='tight', pad_inches=0, dpi=c.DPI)
+        plt.close(fig)
+            
+        saved_files.append((full_path_img, f"{base_name}.png"))
     
     return base_name, saved_files 
 
@@ -899,8 +915,12 @@ def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, poly, csd,
         'slow_noise_amplitude': c.slow_noise_amplitude,
         'fast_noise_amplitude': c.fast_noise_amplitude,
         'ks': np.nan if ks is None else ks,
-        'p_dd': c.p_dd,
-        'p_dg': c.p_dg,
+        'p_dd': c.lambda_coeff_dd,
+        'p_dg': c.lambda_coeff_dg,
+        'dd_avg': c.dd_avg,
+        'dd_std': c.dd_std,
+        'dg_avg': c.dg_avg,
+        'dg_std': c.dg_std,
         'd_DD': c.d_DD,
         'd_DG': c.d_DG,
         'r_min': c.r_min,
@@ -947,7 +967,7 @@ def generate_datapoint(args):
         
         if S == 0:
             fig, _ = plot_CSD(x, y, csd, poly, only_labels=False)
-            gradient = np.gradient(csd,axis=0)+np.gradient(csd,axis=1)
+            gradient = np.gradient(csd.squeeze(),axis=0)+np.gradient(csd.squeeze(),axis=1)
             return (C_DD, C_DG, ks, cut, x_vol, y_vol, csd, poly, sensor, fig, gradient, device, sensors_coordinates)
         # elif S == 1:
         #     fig, _ = plot_CSD(x, y, sensor, poly)

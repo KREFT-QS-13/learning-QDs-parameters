@@ -77,7 +77,7 @@ def load_datapoints(config_tuple, param_names:list, all_batches=True, batches:li
 
 
 def filter_dataset(dps:list):
-    min_value = 4.5
+    min_value = 4.0
     filtered_dps = []
     seen = set()
 

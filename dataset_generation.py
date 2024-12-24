@@ -10,9 +10,6 @@ def main():
     x_vol = np.linspace(-0.01, 0.05, c.RESOLUTION)
     y_vol = np.linspace(-0.01, 0.05, c.RESOLUTION)
 
-    x_vol_range = (x_vol[-1], len(x_vol))
-    y_vol_range = (y_vol[-1], len(y_vol))
-
     ks = None
 
     parser = argparse.ArgumentParser(description="Generating a dataset.")
@@ -29,7 +26,7 @@ def main():
     parser.add_argument('-S', type=int, default=0, 
                         help='The number of sensors in the system.')
 
-    parser.add_argument('--device', type=u.parse_array, default=np.ones((1,2), dtype=int),
+    parser.add_argument('--device', type=u.parse_array, default=None,
                         help='The device array in string format. Example: "[[1,1],[1,1]]"')
     
     parser.add_argument('--sensors_radius', type=u.parse_array, default=None,
@@ -55,7 +52,7 @@ def main():
     K = args.K
     S = args.S
     N_dots = K-S if S>0 else K
-    device = args.device
+    device = args.device if args.device is not None else np.ones((1, K-S), dtype=int)
     sensors_radius = args.sensors_radius
     sensors_angle = args.sensors_angle
     system_name = args.system_name
@@ -63,11 +60,20 @@ def main():
     const_sensors_radius = args.const_sensors_radius
     cut = args.cut
 
-    if system_name == "fixed_4_2":
-        device = np.ones((2,2))
+    if system_name == "sys_2_1":
+        device = np.ones((1,2))
+        sensors_angle = [0]
+        sensors_radius = [1.5*c.d_DD]
+        K = 3
+        S = 1
+        N_dots = len(u.get_dots_indices(device))
+        all_euclidean_cuts = True
+    elif system_name == "sys_3_2":
+        device = np.ones((1,3))
+        N_y, N_x = device.shape
         sensors_angle = [0, 3/2*np.pi]
-        sensors_radius = [1.5*c.d_DD, 1.5*c.d_DD]
-        K = 6
+        sensors_radius = [(N_x-0.5)*c.d_DD, (N_y-0.5)*c.d_DD]
+        K = 5
         S = 2
         N_dots = len(u.get_dots_indices(device))
         all_euclidean_cuts = True
