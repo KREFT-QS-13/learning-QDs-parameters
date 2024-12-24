@@ -7,4 +7,5 @@ Results/
 slurm_scripts/
 ALICE/
 
-test/*
+test/
+test
