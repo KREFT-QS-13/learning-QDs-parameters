@@ -40,41 +40,6 @@ def main():
     
     # Define model configurations
     model_configs = [
-        # { 
-        #     'model': VanillaCNN, 
-        #     'params': {
-        #         'name': 'VanillaCNN_custom',
-        #         'num_conv_layers': 6,
-        #         'filters_per_layer': [32, 64, 128, 256, 512, 1024],
-        #         'kernel_sizes': [3, 3, 5, 3, 3, 5],
-        #         'fc_layers': [2048, 1024, 512],
-        #         'dropout_rate': 0.5
-        #     }
-        # },
-        # {
-        #     'model': ResNet, 
-        #     'params': {
-        #         'config_tuple': config_tuple,
-        #         'name': 'resnet12_model',
-        #         'base_model': 'resnet12',
-        #         'pretrained': True,
-        #         'dropout': 0.1,
-        #         'custom_head': [2048, 1024],
-        #         'filters_per_layer': [16, 32, 64, 128],
-        #     }
-        # },
-        # {
-        #     'model': ResNet, 
-        #     'params': {
-        #         'config_tuple': config_tuple,
-        #         'name': 'resnet10_model',
-        #         'base_model': 'resnet10',
-        #         'pretrained': True,
-        #         'dropout': 0.2,
-        #         'custom_head': [2048, 1024],
-        #         'filters_per_layer': [16, 32, 64, 128],
-        #     }
-        # },
         # {
         #     'model': ResNet, 
         #     'params': {
@@ -87,42 +52,20 @@ def main():
         #         'filters_per_layer': None,
         #     }
         # },
-        #         {
-        #     'model': ResNet, 
-        #     'params': {
-        #         'config_tuple': config_tuple,
-        #         'name': 'resnet18_model',
-        #         'base_model': 'resnet18',
-        #         'pretrained': True,
-        #         'dropout': 0.1,
-        #         'custom_head': [2048, 1024],
-        #         'filters_per_layer': None,
-        #     }
-        # },
-                        {
+        {
             'model': ResNet, 
             'params': {
                 'config_tuple': config_tuple,
-                'name': 'resnet18_model',
-                'base_model': 'resnet18',
+                'name': 'resnet12_model',
+                'base_model': 'resnet12',
                 'pretrained': True,
                 'dropout': 0.1,
                 'custom_head': [2048, 1024],
-                'filters_per_layer': None,
             }
         },
-        # {
-        #     'model': CustomCNN, 
-        #     'params': {
-        #         'name': 'CustomCNN_model',
-        #         'config_tuple': config_tuple,
-        #         'dropout': 0.1,
-        #         'custom_head': None,
-        #     }
-        # },
     ]
 
-    # model_configs = model_configs*4
+    model_configs = model_configs*2
 
     # Define training parameters for each model
     train_params_list = [
@@ -164,15 +107,27 @@ def main():
         {   
             "batch_size": 64,
             "epochs": 25,
-            "learning_rate": 0.0005,
+            "learning_rate": 0.001,
             "val_split": 0.2,
             "test_split": 0.2,
             "random_state": 42,
-            "epsilon": 0.5,
+            "epsilon": 0.1,
             "init_weights": None,
-            "regularization_coeff": 1.75,
+            "regularization_coeff": 0.0,
             "criterion": nn.MSELoss(),
-         },         
+         },  
+        {   
+            "batch_size": 128,
+            "epochs": 25,
+            "learning_rate": 0.001,
+            "val_split": 0.2,
+            "test_split": 0.2,
+            "random_state": 42,
+            "epsilon": 0.1,
+            "init_weights": None,
+            "regularization_coeff": 0.0,
+            "criterion": nn.MSELoss(),
+         },           
     ]  
     # train_params_list = train_params_list
     assert len(model_configs) == len(train_params_list), "Number of model configurations and training parameters must match."
@@ -181,17 +136,19 @@ def main():
     # Load your data
     print("Loading and preparing datasets...")
     
-    datasize_cut = 50000
+    datasize_cut = 64000
     # for training with csd images:
     X, y = mu.prepare_data(config_tuple, datasize_cut=datasize_cut, param_names=['csd', 'C_DD', 'C_DG'])
     param_names = ['csd', 'C_DD', 'C_DG']
-    # for training with csd gradients:
+    
+    
+    ## For training with csd gradients:
     # X, y = mu.prepare_data(config_tuple, datasize_cut=datasize_cut, param_names=['csd_gradient', 'C_DD', 'C_DG'])
     # param_names = ['csd_gradient', 'C_DD', 'C_DG']
 
     # for testing with csd images:
-    # X, y = mu.prepare_data(config_tuple, all_batches=False, batches=np.arange(1,11))
-    # param_names = ['csd_gradient', 'C_DD', 'C_DG']
+    # X, y = mu.prepare_data(config_tuple, all_batches=False, batches=np.arange(1,5))
+    # param_names = ['csd', 'C_DD', 'C_DG']
    
     print(f'Successfully prepared {len(X)} datapoints with input size {c.RESOLUTION}x{c.RESOLUTION}.\n')
     print(f'Time taken: {time.time() - start_time:.2f} seconds')

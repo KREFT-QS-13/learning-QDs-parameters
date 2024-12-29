@@ -43,38 +43,44 @@ def load_datapoints(config_tuple, param_names:list, all_batches=True, batches:li
     if all_batches and batches is None:
         batches_nums = np.arange(1, u.count_directories_in_folder(config_tuple)+1)
     elif all_batches==False and batches is not None:
-        if all(isinstance(b, (int, np.integer)) and b > 0 for b in batches):
+        if not all(isinstance(b, int) for b in batches):
+            batches = [int(b) for b in batches]
+
+        if all(b>0 for b in batches):
             max_batch = u.count_directories_in_folder(config_tuple)
             if all(b <= max_batch for b in batches):
                 batches_nums = batches
             else:
-                raise ValueError(f"Some batch numbers are greater than the total number of directories ({max_batch})")
+                raise ValueError(f"Some batch numbers are greater than the total number of directories ({max_batch}).")
         else:
-            raise ValueError("Batches must be a list of positive integers")
+            raise ValueError("Batches must be a list of positive integers.")
     else:
         raise ValueError("Batches not defined properly, both all_batches and batches activated.")
       
-    # all_groups_data = {param:[] for param in param_names}
-    all_groups_data = []
-    print(f"Loading batches: {len(batches_nums)} from {u.get_path_hfd5(batches_nums[0], config_tuple)}")
+    data_dict = {param:[] for param in param_names}
+    # [list(values) for values in zip(*dictionary.values())]
+
     for b in batches_nums:
         with h5py.File(u.get_path_hfd5(b, config_tuple), 'r') as f:
-            def process_group(name, obj):
-                if isinstance(obj, h5py.Group):
-                    group_data = []
-                    for param in param_names:
-                        if param in obj:
-                            group_data.append(obj[param][()])
-                            # all_groups_data[param].append(obj[param][()])
-                        else:
-                            raise ValueError(f"There is no group/data name {param} in the file {u.get_path_hfd5(b, config_tuple)}.")
-                    
-                    all_groups_data.append(group_data)
+            groups = list(f.keys())
+            for gn in groups:
+                group = f[gn]
+                for param in param_names:
+                    if isinstance(group[param], h5py.Group):
+                        # For parameters that are groups (like 'cuts', 'csd', etc.)
+                        data_list = []
+                        for item in group[param].keys():
+                            data = np.array(group[param][item][()]).squeeze()
+                            data_list.append(data)
+                        data_dict[param].append(data_list)
+                    else:
+                        # For direct datasets
+                        data_dict[param].append(np.array(group[param][()]).squeeze())
 
-            f.visititems(process_group)
+    for param in param_names:
+        data_dict[param] = np.array(data_dict[param]).squeeze()
 
-    return all_groups_data
-
+    return data_dict
 
 def filter_dataset(dps:list):
     min_value = 4.0
@@ -156,7 +162,30 @@ def preprocess_csd(csd_array: np.ndarray, input_type: str = 'csd'):
     
     return transform(csd_array)
 
-def preprocess_capacitance_matrices(c_dd:np.ndarray, c_dg:np.ndarray):
+def get_maxwell_capacitance_matrices(C_DD:np.ndarray, C_DG:np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """
+        Get the Maxwell capacitance matrix.
+    """
+    K = len(C_DD)   
+    maxwell_c_dd = np.zeros((K, K))
+    for i in range(K):
+        for j in range(K):
+            if i==j:
+                maxwell_c_dd[i,j] = np.sum(C_DD[i,:]+ C_DG[i,:]) 
+            else:
+                maxwell_c_dd[i,j] = -C_DD[i,j]
+    
+    maxwell_c_dd = np.round(maxwell_c_dd, 6)
+    maxwell_c_dg = np.round(C_DG, 6)
+
+    return maxwell_c_dd, maxwell_c_dg
+
+def preprocess_capacitance_matrices(c_dd:np.ndarray, c_dg:np.ndarray, maxwell:bool=False):
+    
+    if maxwell:
+        c_dd, c_dg = get_maxwell_capacitance_matrices(c_dd, c_dg)
+        c_dd = np.linalg.inv(c_dd)
+
     K = c_dd.shape[0]
     if c.MODE == 1:
         c_dd = c_dd[np.triu_indices(n=K)]
@@ -190,30 +219,34 @@ def reconstruct_capacitance_matrices(config_tuple, output:np.ndarray):
 
     return c_dd, c_dg   
 
-def preprocess_data(dps:list, filtered:bool=True, input_type:str='csd'):
+def preprocess_data(dps:dict, filtered:bool=True, input_type:str='csd'):
     """
     Args:
-        dps - the list of the loaded parameters' in a format of [['csd','C_DD', 'C_DG', any other ... ], [...], ... [...]]
+        dps - the dictionary of the loaded parameters' in a format of [['csd','C_DD', 'C_DG', any other ... ], [...], ... [...]]
         param_names - the list of the parameters' names to load from .h5 file
     Returns:
         Returns the list of the preprocessed data
     """
-    if filtered:
-        dps = filter_dataset(dps)
+    # if filtered:
+    #     dps = filter_dataset(dps)
     
     # Get only csd and C_DD, C_DG <-> input and output
-    dps = [x[:3] for x in dps]
+    params_name = dps.keys()
+    
     X, Y = list(), list()
 
     print(f"Preprocessing data...")
-    for x in dps:
-        X.append(preprocess_csd(x[0], input_type))
-        Y.append(preprocess_capacitance_matrices(x[1], x[2]))
+    for x in dps[input_type]:
+        X.append(preprocess_csd(x, input_type))
+
+    for c_dd, c_dg in zip(dps['C_DD'], dps['C_DG']):
+        Y.append(preprocess_capacitance_matrices(c_dd, c_dg))
+
     print(f"Data preprocessed.")
     
     return np.array(X), np.array(Y)
 
-def prepare_data(config_tuple, param_names:list=['csd', 'C_DD', 'C_DG'], all_batches=True, batches:list=None, datasize_cut:int=None):
+def prepare_data(config_tuple:tuple, param_names:list=['csd', 'C_DD', 'C_DG'], all_batches:bool=True, batches:list=None, datasize_cut:int=None):
     datapoints = load_datapoints(config_tuple, param_names, all_batches, batches)
     X, Y = preprocess_data(datapoints, input_type=param_names[0])
 

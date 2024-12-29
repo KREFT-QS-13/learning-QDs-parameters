@@ -211,24 +211,6 @@ def generate_capacitance_matrices(config_tuple:tuple[int, int, int]=None, device
     
     return C_DD, C_DG, sensors_corr
 
-def get_maxwell_capacitance_matrices(C_DD:np.ndarray, C_DG:np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """
-        Get the Maxwell capacitance matrix.
-    """
-    K = len(C_DD)   
-    maxwell_c_dd = np.zeros((K, K))
-    for i in range(K):
-        for j in range(K):
-            if i==j:
-                maxwell_c_dd[i,j] = np.sum(C_DD[i,:]+ C_DG[i,:]) 
-            else:
-                maxwell_c_dd[i,j] = -C_DD[i,j]
-    
-    maxwell_c_dd = np.round(maxwell_c_dd, 6)
-    maxwell_c_dg = np.round(C_DG, 6)
-
-    return maxwell_c_dd, maxwell_c_dg
-
 def generate_dummy_data(K:int) -> tuple[np.ndarray, np.ndarray]:
     """
         Generate dummy (identity matrix) capacitance matrices for a given number of dots K.
@@ -703,11 +685,6 @@ def save_img_csd_from_figs(config_tuple, figs, cuts):
     
     return base_name, saved_files 
 
-# TODO: Figure out how to save the data in multiple files after 500 datapoints generation
-#     - thats for safety 
-#     - also start thinking how you will orgenize for more datapoints with bigger K
-#     - for bigger K -> 10 000 datapoints -> \biom{K}{2} * 10 0000 real datapoints ?
-#     - how about the philosophy: you generate to learn (?)
 def save_to_json(dictionary: dict):
     """
         Save the datapoints to a json file.

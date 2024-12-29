@@ -6,6 +6,8 @@ Results/
 *.slurm
 slurm_scripts/
 ALICE/
+ALICE-2/
+
 
 test/
 test
