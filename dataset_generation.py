@@ -69,7 +69,7 @@ def main():
         N_dots = len(u.get_dots_indices(device))
         all_euclidean_cuts = True
     elif system_name == "sys_3_2":
-        device = np.ones((1,3))
+        device = np.array([[0,0,1],[0,1,0],[1,0,0]])
         N_y, N_x = device.shape
         sensors_angle = [0, 3/2*np.pi]
         sensors_radius = [(N_x-0.5)*c.d_DD, (N_y-0.5)*c.d_DD]
