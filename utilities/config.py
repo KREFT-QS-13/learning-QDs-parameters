@@ -40,7 +40,7 @@ fast_noise_amplitude = 2*1e-5 # 1e-5 - 1e-7
 r_min = 5 * d_DD
 r_max = 12 * d_DD
 
-system_name = 'more_impactful'
+system_name = ''
 def get_path(K, N, S):
     """Get the path based on configuration."""
     if S > 0:  # Replaces NOISE check

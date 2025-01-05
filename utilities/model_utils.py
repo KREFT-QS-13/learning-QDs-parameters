@@ -13,7 +13,7 @@ from torchvision import transforms
 import torchvision.transforms.functional as F
 from PIL import Image, ImageEnhance
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, mean_absolute_percentage_error
 from tqdm import tqdm
 
 import matplotlib.pyplot as plt
@@ -59,7 +59,7 @@ def load_datapoints(config_tuple, param_names:list, all_batches=True, batches:li
       
     data_dict = {param:[] for param in param_names}
     # [list(values) for values in zip(*dictionary.values())]
-
+    print(f"Loading data from {u.get_path_hfd5(batches_nums[0], config_tuple)}")
     for b in batches_nums:
         with h5py.File(u.get_path_hfd5(b, config_tuple), 'r') as f:
             groups = list(f.keys())
@@ -180,7 +180,7 @@ def get_maxwell_capacitance_matrices(C_DD:np.ndarray, C_DG:np.ndarray) -> tuple[
 
     return maxwell_c_dd, maxwell_c_dg
 
-def preprocess_capacitance_matrices(c_dd:np.ndarray, c_dg:np.ndarray, maxwell:bool=False):
+def preprocess_capacitance_matrices(c_dd:np.ndarray, c_dg:np.ndarray, maxwell:bool=True):
     
     if maxwell:
         c_dd, c_dg = get_maxwell_capacitance_matrices(c_dd, c_dg)
@@ -219,7 +219,7 @@ def reconstruct_capacitance_matrices(config_tuple, output:np.ndarray):
 
     return c_dd, c_dg   
 
-def preprocess_data(dps:dict, filtered:bool=True, input_type:str='csd'):
+def preprocess_data(dps:dict, filtered:bool=True, input_type:str='csd', maxwell:bool=True):
     """
     Args:
         dps - the dictionary of the loaded parameters' in a format of [['csd','C_DD', 'C_DG', any other ... ], [...], ... [...]]
@@ -240,15 +240,15 @@ def preprocess_data(dps:dict, filtered:bool=True, input_type:str='csd'):
         X.append(preprocess_csd(x, input_type))
 
     for c_dd, c_dg in zip(dps['C_DD'], dps['C_DG']):
-        Y.append(preprocess_capacitance_matrices(c_dd, c_dg))
+        Y.append(preprocess_capacitance_matrices(c_dd, c_dg, maxwell))
 
     print(f"Data preprocessed.")
     
     return np.array(X), np.array(Y)
 
-def prepare_data(config_tuple:tuple, param_names:list=['csd', 'C_DD', 'C_DG'], all_batches:bool=True, batches:list=None, datasize_cut:int=None):
+def prepare_data(config_tuple:tuple, param_names:list=['csd', 'C_DD', 'C_DG'], all_batches:bool=True, batches:list=None, datasize_cut:int=None, maxwell:bool=True):
     datapoints = load_datapoints(config_tuple, param_names, all_batches, batches)
-    X, Y = preprocess_data(datapoints, input_type=param_names[0])
+    X, Y = preprocess_data(datapoints, input_type=param_names[0], maxwell=maxwell)
 
     if datasize_cut is not None and datasize_cut > len(X):
         print(f"Datasize is greater than the number of datapoints available ({len(X)}). Returning all datapoints.")
@@ -305,6 +305,50 @@ def show_image_from_tensor(tensor, unnormalize=False):
     
     plt.show()
 
+def calculate_local_global_accuracy(y_true: np.array, y_pred: np.array, epsilon: float):
+    """
+    Calculate local and global accuracy metrics with a given error margin (epsilon).
+    
+    Args:
+        y_true (numpy.ndarray): True values, shape (N, d).
+        y_pred (numpy.ndarray): Predicted values, shape (N, d).
+        epsilon (float): Error margin.
+    
+    Returns:
+        local_accuracy (np.ndarray): Percentage of correctly predicted dimensions.
+        global_accuracy (float): Percentage of fully correct predicted vectors.
+    """
+    # Calculate absolute differences
+    abs_diff = np.abs(y_true - y_pred)
+    
+    # Local accuracy: proportion of dimensions within epsilon
+    local_accuracy = np.round(np.mean((abs_diff < epsilon).astype(float), axis=0),4)
+
+    # Global accuracy: proportion of samples where all dimensions are within epsilon
+    global_accuracy =  np.round(np.mean((np.max(abs_diff, axis=1) <= epsilon).astype(float)), 4)
+
+    return  global_accuracy * 100, local_accuracy * 100
+
+def concordance_correlation_coef(targets: np.array, outputs: np.array):
+    """
+    Calculate the concordance correlation coefficient (CCC) between true and predicted values.
+
+    Args:
+        targets (np.array): True values, shape (N, d).
+        outputs (np.array): Predicted values, shape (N, d).
+
+    Returns:
+        ccc (np.array): Concordance correlation coefficient for each dimension.
+    """
+    mean_true = np.mean(targets, axis=0)
+    mean_pred = np.mean(outputs, axis=0)
+    var_true = np.var(targets, axis=0)
+    var_pred = np.var(outputs, axis=0)
+    covariance = np.mean((targets - mean_true) * (outputs - mean_pred), axis=0)
+
+    numerator = 2 * covariance
+    denominator = var_true + var_pred + (mean_true - mean_pred) ** 2
+    return numerator / denominator
 
 # ----------------------------- TRAINING
 
@@ -457,10 +501,7 @@ def train_model(config_tuple, model, X, y, batch_size=32, epochs=100, learning_r
         model.train()
         
         train_loss = 0.0
-        global_correct_predictions = 0
-        local_correct_predictions = 0
-        vec_local_correct_predictions = None
-        total_predictions = 0
+        output_dim = None
         all_train_outputs = []
         all_train_targets = []
 
@@ -470,53 +511,43 @@ def train_model(config_tuple, model, X, y, batch_size=32, epochs=100, learning_r
             loss = calculate_loss(config_tuple, criterion, regularization_coeff, outputs, targets)
             loss.backward()
             optimizer.step()
+            output_dim = outputs.shape[1]
             
             train_loss += loss.item()
 
             predicted_values = outputs.detach().cpu().numpy()
             true_values = targets.detach().cpu().numpy()
 
-            correct = np.isclose(predicted_values, true_values, atol=epsilon)
-            if vec_local_correct_predictions is None:
-                vec_local_correct_predictions = np.sum(correct, axis=0)
-            else:
-                vec_local_correct_predictions += np.sum(correct, axis=0)
-            
-            global_correct_predictions += np.sum(np.all(correct, axis=1))
-            local_correct_predictions += np.sum(correct)/len(true_values)
-
-            total_predictions += len(targets)
             all_train_outputs.append(predicted_values)
             all_train_targets.append(true_values)
 
         avg_train_loss = train_loss / len(train_loader)
         
-        global_train_accuracy = global_correct_predictions / total_predictions if total_predictions > 0 else 0
-        local_train_accuracy = local_correct_predictions / total_predictions if total_predictions > 0 else 0
-        vec_local_train_accuracy = vec_local_correct_predictions / total_predictions if total_predictions > 0 else np.zeros_like(vec_local_correct_predictions)
+        all_train_targets = np.array(all_train_targets).reshape(-1, output_dim)
+        all_train_outputs = np.array(all_train_outputs).reshape(-1, output_dim)
+    
+        global_train_acc, vec_local_train_acc = calculate_local_global_accuracy(all_train_targets, all_train_outputs, epsilon)
+        local_train_acc = np.round(np.mean(vec_local_train_acc), 4)
 
-        
-        all_train_outputs = np.concatenate(all_train_outputs)
-        all_train_targets = np.concatenate(all_train_targets)
         train_mse = mean_squared_error(all_train_targets, all_train_outputs)
 
         history['train_losses'].append(avg_train_loss)
-        history['train_accuracies'].append([global_train_accuracy, local_train_accuracy])
-        history['vec_local_train_accuracy'].append(vec_local_train_accuracy)
+        history['train_accuracies'].append([global_train_acc, local_train_acc])
+        history['vec_local_train_accuracy'].append(vec_local_train_acc)
         history['train_mse'].append(train_mse)
 
         # Validation step:
-        val_loss, global_val_accuracy, local_val_accuracy, val_mse, _, val_vec_local_acc = evaluate_model(config_tuple, model, val_loader, criterion, epsilon, regularization_coeff)
+        val_loss, global_val_acc, local_val_acc, val_mse, _, vec_local_val_acc = evaluate_model(config_tuple, model, val_loader, criterion, epsilon, regularization_coeff)
         history['val_losses'].append(val_loss)
-        history['val_accuracies'].append([global_val_accuracy, local_val_accuracy])
-        history['vec_local_val_accuracy'].append(val_vec_local_acc)
+        history['val_accuracies'].append([global_val_acc, local_val_acc])
+        history['vec_local_val_accuracy'].append(vec_local_val_acc)
         history['val_mse'].append(val_mse)
 
         print(f"Epoch {epoch+1}/{epochs}: Tr. Loss: {avg_train_loss:.5f}, Val. Loss: {val_loss:.5f}")
-        print(f"{'':<11} Tr. Acc.: {100*global_train_accuracy:.2f}% ({100*local_train_accuracy:.2f}%), "
-              f"Val. Acc.: {100*global_val_accuracy:.2f}% ({100*local_val_accuracy:.2f}%)")
-        print(f"{'':<11} Vec. Tr. Local Acc.: {np.round(100*vec_local_train_accuracy, 2)}%")
-        print(f"{'':<11} Vec. Val. Local Acc.: {np.round(100*val_vec_local_acc, 2)}%")
+        print(f"{'':<11} Tr. Acc.: {global_train_acc}% ({local_train_acc}%), "
+              f"Val. Acc.: {global_val_acc}% ({local_val_acc}%)")
+        print(f"{'':<11} Vec. Tr. Local Acc.: {vec_local_train_acc}%")
+        print(f"{'':<11} Vec. Val. Local Acc.: {vec_local_val_acc}%")
         print(f"{'':<11} Tr. MSE: {train_mse:.5f}, Val. MSE: {val_mse:.5f}")
 
     return model, history, test_loader
@@ -524,11 +555,8 @@ def train_model(config_tuple, model, X, y, batch_size=32, epochs=100, learning_r
 def evaluate_model(config_tuple, model, dataloader, criterion=nn.MSELoss(), epsilon=1.0,  regularization_coeff=0.0):
     model.eval()
 
-    global_correct_predictions = 0
-    local_correct_predictions = 0
-    vec_local_correct_predictions = None
-    total_predictions = 0
     total_loss = 0.0
+    output_dim = None
     all_outputs = []
     all_targets = []
 
@@ -539,35 +567,26 @@ def evaluate_model(config_tuple, model, dataloader, criterion=nn.MSELoss(), epsi
             loss = calculate_loss(config_tuple, criterion, regularization_coeff, outputs, targets)
             total_loss += loss.item()
             
+            output_dim = outputs.shape[1]
             predicted_values = outputs.cpu().numpy()
             true_values = targets.cpu().numpy()
 
             predictions.append([inputs.cpu().numpy(), true_values, predicted_values])
 
-            correct = np.isclose(predicted_values, true_values, atol=epsilon)
-            if vec_local_correct_predictions is None:
-                vec_local_correct_predictions = np.sum(correct, axis=0)
-            else:
-                vec_local_correct_predictions += np.sum(correct, axis=0)
-            
-            global_correct_predictions += np.sum(np.all(correct, axis=1))
-            local_correct_predictions += np.sum(correct)/len(true_values)
-
-
-            total_predictions += len(targets)
             all_outputs.append(predicted_values)
             all_targets.append(true_values)
 
     avg_loss = total_loss / len(dataloader)
+
+    all_targets = np.array(all_targets).reshape(-1, output_dim)
+    all_outputs = np.array(all_outputs).reshape(-1, output_dim)
     
-    global_avg_accuracy = global_correct_predictions / total_predictions if total_predictions > 0 else 0
-    local_avg_accuracy = local_correct_predictions / total_predictions if total_predictions > 0 else 0
-    vec_local_avg_accuracy = vec_local_correct_predictions / total_predictions if total_predictions > 0 else np.zeros_like(vec_local_correct_predictions)
-    all_outputs = np.concatenate(all_outputs)
-    all_targets = np.concatenate(all_targets)
+    global_acc, vec_local_acc = calculate_local_global_accuracy(all_targets, all_outputs, epsilon)
+    local_acc = np.round(np.mean(vec_local_acc), 4)
+        
     mse = mean_squared_error(all_targets, all_outputs)
 
-    return avg_loss, global_avg_accuracy, local_avg_accuracy, mse, predictions, vec_local_avg_accuracy
+    return avg_loss, global_acc, local_acc, mse, predictions, vec_local_acc
 
 def collect_performance_metrics(model, test_loader):
     model.eval()
@@ -587,11 +606,15 @@ def collect_performance_metrics(model, test_loader):
     mse = mean_squared_error(all_targets, all_outputs)
     mae = mean_absolute_error(all_targets, all_outputs)
     r2 = r2_score(all_targets, all_outputs)
+    mape = mean_absolute_percentage_error(all_targets, all_outputs)
+    ccc = concordance_correlation_coef(all_targets, all_outputs)
 
     metrics = {
         'MSE': mse,
         'MAE': mae,
-        'R2': r2
+        'R2': r2,
+        # 'MAPE': mape,
+        # 'CCC': ccc
     }
     return metrics
 
@@ -642,10 +665,10 @@ def train_evaluate_and_save_models(config_tuple, model_configs, X, y, param_name
         # Collect performance metrics on the test set
         metrics = collect_performance_metrics(trained_model, test_loader)
         
-        print(f"Evaluation: Test Accuracy (Global): {global_test_accuracy:.2f}%, Test Accuracy (Local): {local_test_accuracy:.2f}%")
+        print(f"Evaluation: Test Accuracy (Global): {global_test_accuracy}%, Test Accuracy (Local): {local_test_accuracy}%")
         print(f"Evaluation: Test Loss: {test_loss:.5f}, Test MSE: {test_mse:.5f}")
-        print(f"Evaluation: Vec. Test Local Acc.: {np.round(100*vec_local_test_accuracy, 2)}%")
-        print(f"Evaluation: MSE: {metrics['MSE']:.6f}, MAE: {metrics['MAE']:.6f}, R2: {metrics['R2']:.4f}\n")
+        print(f"Evaluation: Vec. Test Local Acc.: {vec_local_test_accuracy}%")
+        print(f"Evaluation: MSE: {metrics['MSE']:.6f}, MAE: {metrics['MAE']:.6f}, R2: {metrics['R2']:.6f}\n")
 
         # Extract targets and outputs from predictions
         targets = np.concatenate([p[1] for p in predictions])
@@ -926,6 +949,7 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
         test_split = result['train_params']['test_split']
         seed = result['train_params']['random_state']
         model_name = result['config']['params']['name']
+        maxwell_mode = result['param_names'][-1]
         base_model = result['config']['params'].get('base_model', 'N/A')
         init_weights = True if result['train_params']['init_weights'] is not None else False  
         epsilon = result['train_params']['epsilon']
@@ -935,6 +959,7 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
             'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             'model_name': model_name,
             'base_model': base_model,
+            'maxwell_mode': maxwell_mode,
             'input_shape': list(input_shape),
             'output_shape': list(output_shape),
             'dataset_size': dataset_size,
@@ -954,7 +979,9 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
             'test_accuracy_local':result['local_test_accuracy'],
             'MSE': result['metrics']['MSE'],
             'MAE': result['metrics']['MAE'],
-            'R2': result['metrics']['R2']
+            'R2': result['metrics']['R2'],
+            'MAPE': result['metrics']['MAPE'],
+            'CCC': result['metrics']['CCC'] # Concordance Correlation Coefficient
 
         })
     
