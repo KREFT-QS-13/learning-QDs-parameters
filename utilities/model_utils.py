@@ -30,7 +30,7 @@ from models.vanilla_CNN import VanillaCNN
 
 
 # ----------------------------- LOAD DATA
-def load_datapoints(config_tuple, param_names:list, all_batches=True, batches:list=None):
+def load_datapoints(config_tuple, param_names:list, all_batches=True, batches:list=None, system_name:str=''):
     """
     Args:
         param_names - the list of the parameters' names to load from .h5 file
@@ -59,9 +59,9 @@ def load_datapoints(config_tuple, param_names:list, all_batches=True, batches:li
       
     data_dict = {param:[] for param in param_names}
     # [list(values) for values in zip(*dictionary.values())]
-    print(f"Loading data from {u.get_path_hfd5(batches_nums[0], config_tuple)}")
+    print(f"Loading data from {u.get_path_hfd5(batches_nums[0], config_tuple, system_name=system_name)}")
     for b in batches_nums:
-        with h5py.File(u.get_path_hfd5(b, config_tuple), 'r') as f:
+        with h5py.File(u.get_path_hfd5(b, config_tuple, system_name=system_name), 'r') as f:
             groups = list(f.keys())
             for gn in groups:
                 group = f[gn]
@@ -184,7 +184,7 @@ def preprocess_capacitance_matrices(c_dd:np.ndarray, c_dg:np.ndarray, maxwell:bo
     
     if maxwell:
         c_dd, c_dg = get_maxwell_capacitance_matrices(c_dd, c_dg)
-        c_dd = np.linalg.inv(c_dd)
+        # c_dd = np.linalg.inv(c_dd)
 
     K = c_dd.shape[0]
     if c.MODE == 1:
@@ -246,8 +246,8 @@ def preprocess_data(dps:dict, filtered:bool=True, input_type:str='csd', maxwell:
     
     return np.array(X), np.array(Y)
 
-def prepare_data(config_tuple:tuple, param_names:list=['csd', 'C_DD', 'C_DG'], all_batches:bool=True, batches:list=None, datasize_cut:int=None, maxwell:bool=True):
-    datapoints = load_datapoints(config_tuple, param_names, all_batches, batches)
+def prepare_data(config_tuple:tuple, param_names:list=['csd', 'C_DD', 'C_DG'], all_batches:bool=True, batches:list=None, datasize_cut:int=None, maxwell:bool=True, system_name:str=''):
+    datapoints = load_datapoints(config_tuple, param_names, all_batches, batches, system_name)
     X, Y = preprocess_data(datapoints, input_type=param_names[0], maxwell=maxwell)
 
     if datasize_cut is not None and datasize_cut > len(X):
@@ -322,12 +322,12 @@ def calculate_local_global_accuracy(y_true: np.array, y_pred: np.array, epsilon:
     abs_diff = np.abs(y_true - y_pred)
     
     # Local accuracy: proportion of dimensions within epsilon
-    local_accuracy = np.round(np.mean((abs_diff < epsilon).astype(float), axis=0),4)
+    local_accuracy = np.round(np.mean((abs_diff < epsilon).astype(float), axis=0)*100, 2)
 
     # Global accuracy: proportion of samples where all dimensions are within epsilon
-    global_accuracy =  np.round(np.mean((np.max(abs_diff, axis=1) <= epsilon).astype(float)), 4)
+    global_accuracy =  np.round(np.mean((np.max(abs_diff, axis=1) <= epsilon).astype(float))*100, 2)
 
-    return  global_accuracy * 100, local_accuracy * 100
+    return  global_accuracy, local_accuracy 
 
 def concordance_correlation_coef(targets: np.array, outputs: np.array):
     """
@@ -370,6 +370,15 @@ def divide_dataset(X, y, batch_size, val_split, test_split, random_state):
     return train_loader, val_loader, test_loader
 
 #TODO: check if this is correct
+# def physics_informed_regularization_torch(config_tuple, outputs, targets, reduction='mean'):
+#     K, N, S = config_tuple
+
+#     cdd_max_index = K*(K+1)//2
+
+#     # increse regularization on the sensor dot
+#     reg_expression = outputs[:, cdd_max_index] - targets[:, cdd_max_index] +  outputs[:, -1] - targets[:, -1] 
+
+
 def physics_informed_regularization_torch(config_tuple, outputs, targets, reduction='mean'):
     """
     PyTorch version of physics-informed regularization that works with batches and enables autograd.
@@ -412,6 +421,7 @@ def physics_informed_regularization_torch(config_tuple, outputs, targets, reduct
                      true_self_capacitances - 
                      torch.sum(c_dg_hat, dim=2) - 
                      (torch.sum(c_dd_hat, dim=2) - torch.diagonal(c_dd_hat, dim1=1, dim2=2)))
+    
     # TODO: redefine reg_expression just for diagonal terms in hat matrices the rest from the 
     # More specific regularization expression: just for diagonal terms in hat matrices the rest from the true values
     # reg_expression = (torch.diagonal(c_dd_hat, dim1=1, dim2=2) - 
@@ -485,16 +495,17 @@ def train_model(config_tuple, model, X, y, batch_size=32, epochs=100, learning_r
     }
 
     # If we're continuing training, load the previous history
+    extended_history = history.copy()
     if init_weights:
         history_path = os.path.join(os.path.dirname(init_weights), 'results.json')
         if os.path.exists(history_path):
             with open(history_path, 'r') as f:
                 prev_history = json.load(f)['history']
             for key in history:
-                history[key] = prev_history.get(key, [])
+                extended_history[key] = prev_history.get(key, [])
 
-            print(f"Last epoch: Tr. Loss: {history['train_losses'][-1]:.5f}, Val. Loss: {history['val_losses'][-1]:.5f}\n", 
-                f"{'':<11}Tr. MSE: {history['train_mse'][-1]:.3f}, Val. MSE: {history['val_mse'][-1]:.3f}")
+            print(f"Last epoch: Tr. Loss: {extended_history['train_losses'][-1]:.5f}, Val. Loss: {extended_history['val_losses'][-1]:.5f}\n", 
+                f"{'':<11}Tr. MSE: {extended_history['train_mse'][-1]:.3f}, Val. MSE: {extended_history['val_mse'][-1]:.3f}")
               
 
     for epoch in range(epochs): 
@@ -527,7 +538,7 @@ def train_model(config_tuple, model, X, y, batch_size=32, epochs=100, learning_r
         all_train_outputs = np.array(all_train_outputs).reshape(-1, output_dim)
     
         global_train_acc, vec_local_train_acc = calculate_local_global_accuracy(all_train_targets, all_train_outputs, epsilon)
-        local_train_acc = np.round(np.mean(vec_local_train_acc), 4)
+        local_train_acc = np.round(np.mean(vec_local_train_acc), 2)
 
         train_mse = mean_squared_error(all_train_targets, all_train_outputs)
 
@@ -573,8 +584,8 @@ def evaluate_model(config_tuple, model, dataloader, criterion=nn.MSELoss(), epsi
 
             predictions.append([inputs.cpu().numpy(), true_values, predicted_values])
 
-            all_outputs.append(predicted_values)
-            all_targets.append(true_values)
+            all_outputs.extend(predicted_values)
+            all_targets.extend(true_values)
 
     avg_loss = total_loss / len(dataloader)
 
@@ -582,7 +593,7 @@ def evaluate_model(config_tuple, model, dataloader, criterion=nn.MSELoss(), epsi
     all_outputs = np.array(all_outputs).reshape(-1, output_dim)
     
     global_acc, vec_local_acc = calculate_local_global_accuracy(all_targets, all_outputs, epsilon)
-    local_acc = np.round(np.mean(vec_local_acc), 4)
+    local_acc = np.round(np.mean(vec_local_acc), 2)
         
     mse = mean_squared_error(all_targets, all_outputs)
 
@@ -660,7 +671,7 @@ def train_evaluate_and_save_models(config_tuple, model_configs, X, y, param_name
         trained_model, history, test_loader = train_model(config_tuple, model, X, y, **train_params)
         
         # Evaluate the model
-        test_loss, global_test_accuracy, local_test_accuracy, test_mse, predictions, vec_local_test_accuracy = evaluate_model(config_tuple, trained_model, test_loader, epsilon=train_params.get('epsilon', 1.0))
+        test_loss, global_test_accuracy, local_test_accuracy, test_mse, predictions, vec_local_test_accuracy = evaluate_model(config_tuple, trained_model, test_loader, epsilon=train_params['epsilon'])
         
         # Collect performance metrics on the test set
         metrics = collect_performance_metrics(trained_model, test_loader)
@@ -949,7 +960,7 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
         test_split = result['train_params']['test_split']
         seed = result['train_params']['random_state']
         model_name = result['config']['params']['name']
-        maxwell_mode = result['param_names'][-1]
+        mode = 'MW-' + str(result['param_names'][-2]) + '-' + str(result['param_names'][-1])
         base_model = result['config']['params'].get('base_model', 'N/A')
         init_weights = True if result['train_params']['init_weights'] is not None else False  
         epsilon = result['train_params']['epsilon']
@@ -959,7 +970,7 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
             'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             'model_name': model_name,
             'base_model': base_model,
-            'maxwell_mode': maxwell_mode,
+            'mode': mode,
             'input_shape': list(input_shape),
             'output_shape': list(output_shape),
             'dataset_size': dataset_size,
@@ -980,8 +991,8 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
             'MSE': result['metrics']['MSE'],
             'MAE': result['metrics']['MAE'],
             'R2': result['metrics']['R2'],
-            'MAPE': result['metrics']['MAPE'],
-            'CCC': result['metrics']['CCC'] # Concordance Correlation Coefficient
+            # 'MAPE': result['metrics']['MAPE'],
+            # 'CCC': result['metrics']['CCC'] # Concordance Correlation Coefficient
 
         })
     

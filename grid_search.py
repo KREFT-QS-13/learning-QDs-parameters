@@ -11,7 +11,7 @@ import utilities.config as c
 import utilities.model_utils as mu
 from models.transfer_CNN import ResNet
 
-def grid_search(config_tuple:tuple, datasize_cut:int=35000, save_dir:str='Results'):
+def grid_search(config_tuple:tuple, datasize_cut:int=64000, save_dir:str='Results'):
     """
     Perform grid search for ResNet hyperparameters.
     """
@@ -30,31 +30,35 @@ def grid_search(config_tuple:tuple, datasize_cut:int=35000, save_dir:str='Result
     # Define parameter grids
     param_grid = {
         'base_model': ['resnet18'], # 1
-        'batch_size': [64, 128, 256, 512], # 4
-        'learning_rate': [0.0001, 0.0005, 0.001, 0.005], # 4
-        'dropout': [0.0, 0.25, 0.5], # 3
+        'batch_size': [64, 512], # 4
+        'learning_rate': [0.0001], # 4
+        # 'dropout': [0.0, 0.25, 0.5], # 3
+        'dropout': [0.1], # 3
         'custom_head': [
             [2048, 1024],
             [4096, 512],
             [2048, 512, 128],
+            [2048, 1024, 512],
+            [2048, 1024, 512, 256],
+            [4096, 1024, 256, 64],
         ] # 3
     }
 
     # Load data
     start_time = time.time()
     print("Loading and preparing datasets...")
-    X, y = mu.prepare_data(config_tuple, datasize_cut=datasize_cut)
+    X, y = mu.prepare_data(config_tuple, datasize_cut=datasize_cut, all_batches=False, batches=np.arange(1,65))
     print(f'Successfully prepared {len(X)} datapoints.\n')
     end_time = time.time()
     print(f"Time taken to prepare data: {end_time - start_time:.2f} seconds")
 
     # Training parameters that stay constant
     base_train_params = {
-        'epochs': 50,
+        'epochs': 20,
         'val_split': 0.15,
         'test_split': 0.15,
         'random_state': 42,
-        'epsilon': 0.05,
+        'epsilon': 1.0,
         'init_weights': None
     }
 
@@ -137,6 +141,7 @@ if __name__ == "__main__":
     parser.add_argument('--save_dir', type=str, default='Results', help="Directory to save the results.")
     parser.add_argument('-K', type=int, default=2, help="The number of all quanutum dots in the system (including sensors).")
     parser.add_argument('-S', type=int, default=0, help="Number of sensors in the system.")
+    
 
     args = parser.parse_args()
     K = args.K

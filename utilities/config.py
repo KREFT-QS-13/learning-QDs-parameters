@@ -5,8 +5,8 @@ import numpy as np
 PATH_0 = "./"
 # PATH_0 = "../../data1/Project_data_and_results/"
 
-# PATH_TO_DATASETS = "datasets/"
-PATH_TO_DATASETS = "ALICE/"
+PATH_TO_DATASETS = "datasets/"
+# PATH_TO_DATASETS = "ALICE/"
 
 PATH_TO_RESULTS = "Results/"
 
@@ -21,7 +21,7 @@ lambda_coeff_dd = 0.62 # 5% C_DD[i,i]
 lambda_coeff_dg = 0.2 # 20% C_DG[i,i]
 
 # mag_list = [6.5, 7, 8, 9, 10, 12, 14, 15]
-dg_avg = 13.0 # 15.0
+dg_avg = 12.0 # 15.0
 dg_std = 2.0 # 2.0
 
 dd_avg = 10 # 10.0 , 25.0
@@ -30,8 +30,8 @@ dd_std = 2.0 # 3.0, 5.0
 scale = 1.0
 
 tunnel_coupling_const = 100*1e-6    
-slow_noise_amplitude = 2*1e-5  # 1e-5 - 1e-7
-fast_noise_amplitude = 2*1e-5 # 1e-5 - 1e-7
+slow_noise_amplitude = 2*1e-4  # 1e-5 - 1e-7
+fast_noise_amplitude = 2*1e-4 # 1e-5 - 1e-7
 
 # noise case:
 # slow_noise_amplitude = 1e-99 
@@ -40,8 +40,8 @@ fast_noise_amplitude = 2*1e-5 # 1e-5 - 1e-7
 r_min = 5 * d_DD
 r_max = 12 * d_DD
 
-system_name = ''
-def get_path(K, N, S):
+system_name_dataGen = ''
+def get_path(K, N, S, system_name = system_name_dataGen):
     """Get the path based on configuration."""
     if S > 0:  # Replaces NOISE check
         if not system_name or system_name.isspace():  # Check if empty or whitespace

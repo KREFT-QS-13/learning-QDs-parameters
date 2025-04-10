@@ -22,14 +22,18 @@ def main():
     parser.add_argument('-S', type=int, required=True,  
                         help='The number of sensors in the system.')
     
+    parser.add_argument('--system_name', type=str, required=False, default='',   
+                        help='The name of the system, i.e. the name of the folder where the datasets is saved.')
+    
     args = parser.parse_args()
 
     mode = args.mode
     K = args.K
     S = args.S
     N = K - S
+    system_name = args.system_name
     config_tuple = (K, N, S)
-    print(f"Configuration tuple of the system: K={K}, N={N}, S={S}.")
+    print(f"Configuration tuple of the system: K={K}, N={N}, S={S}. System name: {system_name}.")
 
     # Check if CUDA is available
     if torch.cuda.is_available():
@@ -44,37 +48,37 @@ def main():
         #     'model': ResNet, 
         #     'params': {
         #         'config_tuple': config_tuple,
-        #         'name': 'resnet12_model',
+        #         'name': 'rn12-K2-max_not_rev',
         #          'base_model': 'resnet12',
         #          'pretrained': True,
         #          'dropout': 0.1,
-        #          'custom_head': [2048, 1024],
+        #          'custom_head': [2048, 1024, 512],
         #      }
-        # },
-        # {
-        #     'model': ResNet, 
-        #     'params': {
-        #         'config_tuple': config_tuple,
-        #         'name': 'resnet34_model',
-        #         'base_model': 'resnet34',
-        #         'pretrained': True,
-        #         'dropout': 0.1,
-        #         'custom_head': [2048, 1024],
-        #         'filters_per_layer': None,
-        #     }
         # },
         {
             'model': ResNet, 
             'params': {
                 'config_tuple': config_tuple,
-                'name': 'resnet18_model',
-                'base_model': 'resnet18',
+                'base_model': 'resnet34',
+                'name': f'rn34-{N}-{S}-nr',
                 'pretrained': True,
                 'dropout': 0.1,
-                'custom_head': [2048, 1024],
-                'filters_per_layer': None,
-            }
+                'custom_head': [4096, 2048, 512, 128],
+             }
         },
+
+        
+        # {
+        #     'model': ResNet, 
+        #     'params': {
+        #         'config_tuple': config_tuple,
+        #         'name': 'resnet10_model',
+        #         'base_model': 'resnet10',
+        #         'pretrained': True,
+        #         'dropout': 0.1,
+        #         'custom_head': [2048, 1024],
+        #     }
+        # },
     ]
 
 
@@ -82,115 +86,80 @@ def main():
     # Define training parameters for each model
     train_params_list = [
         # {   
-        #     'batch_size': 16, # 32, 64
-        #     'epochs': 50, #5, 20, 50, 100
-        #     'learning_rate': 0.0005, #0.0005, 0.0001, 0.005, 0.001
+        #     'batch_size': 128,
+        #     'epochs': 20, 
+        #     'learning_rate': 0.0001, 
         #     'val_split': 0.2,
         #     'test_split': 0.2,
         #     'random_state': 42,
         #     'epsilon':0.5,
         #     'init_weights': None,
         # },
-        # {   
-        #     'batch_size': 128,
-        #     'epochs': 50, 
-        #     'learning_rate': 0.005,
-        #     'val_split': 0.2,
-        #     'test_split': 0.2,
-        #     'random_state': 42,
-        #     'epsilon': 0.5,
-        #     'load_conv_only': True,
-        #     'init_weights': "./Results/resnet18/resnet18_model_20241122_155316/resnet18_model.pth", 
-        #     'regularization_coeff': 0.8,
-        #     'criterion': nn.MSELoss(),
-        # },
-        # {   
-        #     'batch_size': 64,
-        #     'epochs': 10, 
-        #     'learning_rate': 0.001,
-        #     'val_split': 0.2,
-        #     'test_split': 0.2,
-        #     'random_state': 42,
-        #     'epsilon': 0.5,
-        #     'init_weights': None, 
-        #     'regularization_coeff':  1.25,
-        #     'criterion': nn.MSELoss(),
-        # },
-        # {   
-        #     "batch_size": 512,
-        #     "epochs": 25,
-        #     "learning_rate": 0.01,
-        #     "val_split": 0.2,
-        #     "test_split": 0.2,
-        #     "random_state": 42,
-        #     "epsilon": 0.5,
-        #     "init_weights": None,
-        #     "regularization_coeff": 0.0,
-        #     "criterion": nn.MSELoss(),
-        #  },  
+
         # {   
         #     "batch_size": 64,
-        #     "epochs": 25,
+        #     "epochs": 20,
         #     "learning_rate": 0.0001,
         #     "val_split": 0.2,
         #     "test_split": 0.2,
         #     "random_state": 42,
-        #     "epsilon": 0.5,
-        #     "init_weights": None,
+        #     "epsilon": 1.0,
+        #     "init_weights": './Results/resnet18/rn18--2-1_20250106_015911/rn18--2-1.pth',
         #     "regularization_coeff": 0.0,
         #     "criterion": nn.MSELoss(),
-        #  },   
-        {   
-            "batch_size": 256,
-            "epochs":10,
+        #  },    
+        
+        # {   
+        #     "batch_size": 128,
+        #     "epochs": 20,
+        #     "learning_rate": 0.0001,
+        #     "val_split": 0.2,
+        #     "test_split": 0.2,
+        #     "random_state": 42,
+        #     "epsilon": 1.0,
+        #     "init_weights":  './Results/resnet18/rn18--2-1_20250106_015911/rn18--2-1.pth',
+        #     "regularization_coeff": 0.0,
+        #     "criterion": nn.MSELoss(),
+        #  }, 
+        #   {   
+        #     "batch_size": 256,
+        #     "epochs": 20,
+        #     "learning_rate": 0.0001,
+        #     "val_split": 0.2,
+        #     "test_split": 0.2,
+        #     "random_state": 42,
+        #     "epsilon": 1.0,
+        #     "init_weights": './Results/resnet18/rn18--2-1_20250106_015911/rn18--2-1.pth',
+        #     "regularization_coeff": 0.0,
+        #     "criterion": nn.MSELoss(),
+        #  },  
+         {   
+            "batch_size": 128,
+            "epochs": 20,
             "learning_rate": 0.0001,
             "val_split": 0.2,
             "test_split": 0.2,
             "random_state": 42,
-            "epsilon": 1.5,
+            "epsilon": 1.0,
             "init_weights": None,
             "regularization_coeff": 0.0,
             "criterion": nn.MSELoss(),
-         },          
+         }, 
         # {   
-        #     "batch_size": 512,
-        #     "epochs": 50,
+        #     "batch_size": 1024,
+        #     "epochs": 20,
         #     "learning_rate": 0.0001,
         #     "val_split": 0.2,
         #     "test_split": 0.2,
         #     "random_state": 42,
-        #     "epsilon": 0.5,
-        #     "init_weights": None,
+        #     "epsilon": 1.0,
+        #     "init_weights": './Results/resnet18/rn18--2-1_20250106_015911/rn18--2-1.pth',
         #     "regularization_coeff": 0.0,
         #     "criterion": nn.MSELoss(),
-        #  }, 
-        # {   
-        #     "batch_size": 512,
-        #     "epochs": 50,
-        #     "learning_rate": 0.001,
-        #     "val_split": 0.2,
-        #     "test_split": 0.2,
-        #     "random_state": 42,
-        #     "epsilon": 0.5,
-        #     "init_weights": None,
-        #     "regularization_coeff": 0.0,
-        #     "criterion": nn.MSELoss(),
-        #  }, 
-        #          {   
-        #     "batch_size": 512,
-        #     "epochs": 50,
-        #     "learning_rate": 0.01,
-        #     "val_split": 0.2,
-        #     "test_split": 0.2,
-        #     "random_state": 42,
-        #     "epsilon": 0.5,
-        #     "init_weights": None,
-        #     "regularization_coeff": 0.0,
-        #     "criterion": nn.MSELoss(),
-        #  },
+        #  } 
     ]  
 
-    model_configs = model_configs*len(train_params_list)
+    train_params_list = train_params_list*len(model_configs)
     # train_params_list = train_params_list
     assert len(model_configs) == len(train_params_list), "Number of model configurations and training parameters must match."
     
@@ -198,8 +167,8 @@ def main():
     # Load your data
     print("Loading and preparing datasets...")
     
-    datasize_cut = 32000
-    maxwell_mode = False
+    datasize_cut = 64000
+    maxwell_mode = True
     # for training with csd:
     # X, y = mu.prepare_data(config_tuple, datasize_cut=datasize_cut, param_names=['csd_gradient', 'C_DD', 'C_DG'], maxwell=maxwell_mode)
     # param_names_to_save= ['csd_gradient', 'C_DD', 'C_DG', f'{maxwell_mode}']
@@ -207,12 +176,13 @@ def main():
 
     # for testing with csd images:
     X, y = mu.prepare_data(config_tuple, 
-                           param_names=['csd_gradient', 'C_DD', 'C_DG'],
+                           param_names=['csd', 'C_DD', 'C_DG'],
                            all_batches=False,
-                           batches=np.arange(1,33), 
+                           batches=np.arange(1,65), 
                            datasize_cut=datasize_cut,
-                           maxwell=maxwell_mode)
-    param_names_to_save = ['csd_gradient', 'C_DD', 'C_DG', f'{maxwell_mode}']
+                           maxwell=maxwell_mode,
+                           system_name=system_name)
+    param_names_to_save = ['csd_gradient', 'C_DD', 'C_DG', f'{maxwell_mode}', f'{system_name}']
    
     print(f'Successfully prepared {len(X)} datapoints with input size {c.RESOLUTION}x{c.RESOLUTION}.\n')
     print(f'Time taken: {time.time() - start_time:.2f} seconds')

@@ -254,7 +254,7 @@ def plot_csd_from_sensor(sensor_output, cut=None, sensor_channel=0):
     return plt.gcf(), ax
 
 def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesks: list[np.ndarray], 
-             only_edges:bool=True, only_labels:bool=True, res:int=RESOLUTION, dpi:int=DPI):
+             only_edges:bool=False, only_labels:bool=True, res:int=RESOLUTION, dpi:int=DPI):
     """
     Plot the charge stability diagram (CSD).
     
@@ -285,7 +285,7 @@ def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesk
                     
                 # print(polytopesks, len(polytopesks))
                 plot_polytopes(ax, polytopesks[cut], axes_rescale=1e3, 
-                                only_edges=only_edges, only_labels=only_labels)
+                                only_edges=only_edges, only_labels=only_labels, skip_dots=[2])
                     
                 ax.set_xlim(x[0]*1e3, x[-1]*1e3)
                 ax.set_ylim(y[0]*1e3, y[-1]*1e3)
@@ -790,14 +790,14 @@ def get_batch_folder_name(batch_num: int, config_tuple: tuple[int, int, int]):
         print(ValueError(f"Batch number is too high! Max: {count_directories_in_folder(config_tuple)}!"))
         return None
 
-def get_path_hfd5(batch_num: int, config_tuple: tuple[int, int, int], v: bool=False):
+def get_path_hfd5(batch_num: int, config_tuple: tuple[int, int, int], v: bool=False, system_name:str=''):
     """
         Get the path to the hfd5 file.
         For now it is for testing and not yet finished.
     """
     K, N, S = config_tuple
     batch_name = get_batch_folder_name(batch_num, config_tuple)
-    path = c.get_path(K, N, S)
+    path = c.get_path(K, N, S, system_name)
     full_path_dps = os.path.join(path, batch_name, 'datapoints.h5')
           
     return full_path_dps
