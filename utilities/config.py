@@ -5,8 +5,8 @@ import numpy as np
 PATH_0 = "./"
 # PATH_0 = "../../data1/Project_data_and_results/"
 
-PATH_TO_DATASETS = "datasets/"
-# PATH_TO_DATASETS = "ALICE/"
+# PATH_TO_DATASETS = "datasets/"
+PATH_TO_DATASETS = "ALICE/"
 
 PATH_TO_RESULTS = "Results/"
 
@@ -41,12 +41,13 @@ r_min = 5 * d_DD
 r_max = 12 * d_DD
 
 system_name_dataGen = ''
-def get_path(K, N, S, system_name = system_name_dataGen):
+def get_path(K:int, N:int, S:int, system_name:str=None):
     """Get the path based on configuration."""
     if S > 0:  # Replaces NOISE check
-        if not system_name or system_name.isspace():  # Check if empty or whitespace
+        if not system_name:  # Check if empty or whitespace
             return os.path.join(PATH_0, PATH_TO_DATASETS, f'N-{N}_S-{S}', f'{RESOLUTION}x{RESOLUTION}')
         return os.path.join(PATH_0, PATH_TO_DATASETS, f'{system_name}-N-{N}_S-{S}', f'{RESOLUTION}x{RESOLUTION}')    
+    
     else:
         return os.path.join(PATH_0, PATH_TO_DATASETS, f'K-{K}', f'{RESOLUTION}x{RESOLUTION}')
 

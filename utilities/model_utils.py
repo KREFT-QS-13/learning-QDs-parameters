@@ -30,7 +30,7 @@ from models.vanilla_CNN import VanillaCNN
 
 
 # ----------------------------- LOAD DATA
-def load_datapoints(config_tuple, param_names:list, all_batches=True, batches:list=None, system_name:str=''):
+def load_datapoints(config_tuple, param_names:list, all_batches=True, batches:list=None, system_name:str=None):
     """
     Args:
         param_names - the list of the parameters' names to load from .h5 file
@@ -41,13 +41,13 @@ def load_datapoints(config_tuple, param_names:list, all_batches=True, batches:li
         A dictionary where keys are param_names and values are lists of elements from all batches
     """
     if all_batches and batches is None:
-        batches_nums = np.arange(1, u.count_directories_in_folder(config_tuple)+1)
+        batches_nums = np.arange(1, u.count_directories_in_folder(config_tuple, system_name)+1)
     elif all_batches==False and batches is not None:
         if not all(isinstance(b, int) for b in batches):
             batches = [int(b) for b in batches]
 
         if all(b>0 for b in batches):
-            max_batch = u.count_directories_in_folder(config_tuple)
+            max_batch = u.count_directories_in_folder(config_tuple, system_name)
             if all(b <= max_batch for b in batches):
                 batches_nums = batches
             else:
@@ -180,19 +180,37 @@ def get_maxwell_capacitance_matrices(C_DD:np.ndarray, C_DG:np.ndarray) -> tuple[
 
     return maxwell_c_dd, maxwell_c_dg
 
-def preprocess_capacitance_matrices(c_dd:np.ndarray, c_dg:np.ndarray, maxwell:bool=True):
+def preprocess_capacitance_matrices(c_dd:np.ndarray, c_dg:np.ndarray, maxwell:bool):
+    # Validate input shapes
+    if not isinstance(c_dd, np.ndarray) or not isinstance(c_dg, np.ndarray):
+        raise ValueError(f"Expected numpy arrays, got C_DD: {type(c_dd)}, C_DG: {type(c_dg)}")
+    
+    if len(c_dd.shape) != 2 or len(c_dg.shape) != 2:
+        raise ValueError(f"Expected 2D arrays, got C_DD shape: {c_dd.shape}, C_DG shape: {c_dg.shape}")
+    
+    K = c_dd.shape[0]
+    if c_dd.shape != (K, K) or c_dg.shape != (K, K):
+        raise ValueError(f"Expected KxK matrices, got C_DD shape: {c_dd.shape}, C_DG shape: {c_dg.shape}")
     
     if maxwell:
         c_dd, c_dg = get_maxwell_capacitance_matrices(c_dd, c_dg)
         # c_dd = np.linalg.inv(c_dd)
 
-    K = c_dd.shape[0]
     if c.MODE == 1:
-        c_dd = c_dd[np.triu_indices(n=K)]
-        return np.concatenate((c_dd, c_dg.reshape(K**2)), axis=None)
-    elif c.MODE  == 2:
+        # Get upper triangular part of C_DD (including diagonal)
+        c_dd_upper = c_dd[np.triu_indices(n=K)]
+        # Reshape C_DG to a 1D array
+        c_dg_flat = c_dg.reshape(K**2)
+        # Concatenate and ensure output is 1D
+        output = np.concatenate((c_dd_upper, c_dg_flat))
+        # Verify output shape
+        expected_size = K * (K + 1) // 2 + K**2
+        if output.shape != (expected_size,):
+            raise ValueError(f"Unexpected output shape. Expected ({expected_size},), got {output.shape}")
+        return output
+    elif c.MODE == 2:
         return np.concatenate((np.diag(c_dd), np.diag(c_dg)), axis=None)
-    elif c.MODE  == 3:
+    elif c.MODE == 3:
         return np.diag(c_dd)
     else:
         raise ValueError(f"Mode must be 1 (all params), 2(both diags), 3(diag C_DD), {c.MODE} is not a valid mode.")
@@ -219,7 +237,7 @@ def reconstruct_capacitance_matrices(config_tuple, output:np.ndarray):
 
     return c_dd, c_dg   
 
-def preprocess_data(dps:dict, filtered:bool=True, input_type:str='csd', maxwell:bool=True):
+def preprocess_data(dps:dict, input_type:str, maxwell:bool, filtered:bool=True):
     """
     Args:
         dps - the dictionary of the loaded parameters' in a format of [['csd','C_DD', 'C_DG', any other ... ], [...], ... [...]]
@@ -231,22 +249,36 @@ def preprocess_data(dps:dict, filtered:bool=True, input_type:str='csd', maxwell:
     #     dps = filter_dataset(dps)
     
     # Get only csd and C_DD, C_DG <-> input and output
-    params_name = dps.keys()
+    # params_name = dps.keys()
     
     X, Y = list(), list()
+    skipped = 0
+    total = len(dps[input_type])
 
     print(f"Preprocessing data...")
-    for x in dps[input_type]:
-        X.append(preprocess_csd(x, input_type))
+    for i, (x, c_dd, c_dg) in enumerate(zip(dps[input_type], dps['C_DD'], dps['C_DG'])):
+        try:
+            # Process input (CSD)
+            X.append(preprocess_csd(x, input_type))
+            
+            # Process output (capacitance matrices)
+            y = preprocess_capacitance_matrices(c_dd, c_dg, maxwell)
+            Y.append(y)
+        except ValueError as e:
+            print(f"Skipping datapoint {i} due to error: {e}")
+            skipped += 1
+            continue
 
-    for c_dd, c_dg in zip(dps['C_DD'], dps['C_DG']):
-        Y.append(preprocess_capacitance_matrices(c_dd, c_dg, maxwell))
-
-    print(f"Data preprocessed.")
+    if skipped > 0:
+        print(f"Warning: Skipped {skipped}/{total} datapoints due to invalid shapes or values")
+    print(f"Data preprocessed. Using {total-skipped} datapoints.")
     
+    if len(X) == 0:
+        raise ValueError("No valid datapoints found after preprocessing!")
+        
     return np.array(X), np.array(Y)
 
-def prepare_data(config_tuple:tuple, param_names:list=['csd', 'C_DD', 'C_DG'], all_batches:bool=True, batches:list=None, datasize_cut:int=None, maxwell:bool=True, system_name:str=''):
+def prepare_data(config_tuple:tuple, param_names:list=['csd', 'C_DD', 'C_DG'], all_batches:bool=True, batches:list=None, datasize_cut:int=None, maxwell:bool=True, system_name:str=None):
     datapoints = load_datapoints(config_tuple, param_names, all_batches, batches, system_name)
     X, Y = preprocess_data(datapoints, input_type=param_names[0], maxwell=maxwell)
 
@@ -255,6 +287,7 @@ def prepare_data(config_tuple:tuple, param_names:list=['csd', 'C_DD', 'C_DG'], a
         return torch.FloatTensor(X), torch.FloatTensor(Y)
     else:
         return torch.FloatTensor(X[:datasize_cut]), torch.FloatTensor(Y[:datasize_cut])
+    
 
 def tensor_to_image(tensor, unnormalize=True):
     """
@@ -286,24 +319,45 @@ def tensor_to_image(tensor, unnormalize=True):
 
     return image_array
 
-def show_image_from_tensor(tensor, unnormalize=False):
+def show_image_from_tensor(tensor, unnormalize=False, save_path=None):
     """
     Display an image from a PyTorch tensor.
 
     Args:
         tensor (torch.Tensor): The input tensor with shape (1, H, W) for grayscale or (C, H, W) for color.
         unnormalize (bool): If True, reverse the normalization (default is True).
+        save_path (str, optional): If provided, save the image to this path instead of displaying it.
     """
     image_array = tensor_to_image(tensor, unnormalize)
 
+    # Create figure with specific size and DPI
     plt.figure(figsize=(c.RESOLUTION/c.DPI, c.RESOLUTION/c.DPI), dpi=c.DPI, layout='tight')
     
-    plt.imshow(image_array, cmap='gray')
-    
+    # Display the image
+    plt.imshow(image_array)
     plt.axis('off')
     plt.tight_layout(pad=0)
     
-    plt.show()
+    if save_path:
+        # Save to specified path
+        plt.savefig(save_path, bbox_inches='tight', pad_inches=0)
+        plt.close()
+    else:
+        try:
+            # Try to determine if we're in a notebook
+            import IPython
+            if IPython.get_ipython() is not None:
+                # We're in a notebook, display inline
+                plt.show()
+            else:
+                # Not in a notebook, try to show interactively
+                plt.show()
+        except Exception as e:
+            print(f"Could not display image interactively: {e}")
+            print("Saving image to 'tensor_image.png' instead...")
+            plt.savefig('tensor_image.png', bbox_inches='tight', pad_inches=0)
+        finally:
+            plt.close()
 
 def calculate_local_global_accuracy(y_true: np.array, y_pred: np.array, epsilon: float):
     """
@@ -507,12 +561,10 @@ def train_model(config_tuple, model, X, y, batch_size=32, epochs=100, learning_r
             print(f"Last epoch: Tr. Loss: {extended_history['train_losses'][-1]:.5f}, Val. Loss: {extended_history['val_losses'][-1]:.5f}\n", 
                 f"{'':<11}Tr. MSE: {extended_history['train_mse'][-1]:.3f}, Val. MSE: {extended_history['val_mse'][-1]:.3f}")
               
-
     for epoch in range(epochs): 
         model.train()
         
         train_loss = 0.0
-        output_dim = None
         all_train_outputs = []
         all_train_targets = []
 
@@ -522,20 +574,27 @@ def train_model(config_tuple, model, X, y, batch_size=32, epochs=100, learning_r
             loss = calculate_loss(config_tuple, criterion, regularization_coeff, outputs, targets)
             loss.backward()
             optimizer.step()
-            output_dim = outputs.shape[1]
             
             train_loss += loss.item()
 
+            # Convert to numpy and ensure correct shape
             predicted_values = outputs.detach().cpu().numpy()
             true_values = targets.detach().cpu().numpy()
+            
+            # Ensure both arrays have the same shape
+            if len(predicted_values.shape) == 1:
+                predicted_values = predicted_values.reshape(1, -1)
+            if len(true_values.shape) == 1:
+                true_values = true_values.reshape(1, -1)
 
             all_train_outputs.append(predicted_values)
             all_train_targets.append(true_values)
 
         avg_train_loss = train_loss / len(train_loader)
         
-        all_train_targets = np.array(all_train_targets).reshape(-1, output_dim)
-        all_train_outputs = np.array(all_train_outputs).reshape(-1, output_dim)
+        # Concatenate all batches
+        all_train_outputs = np.concatenate(all_train_outputs, axis=0)
+        all_train_targets = np.concatenate(all_train_targets, axis=0)
     
         global_train_acc, vec_local_train_acc = calculate_local_global_accuracy(all_train_targets, all_train_outputs, epsilon)
         local_train_acc = np.round(np.mean(vec_local_train_acc), 2)

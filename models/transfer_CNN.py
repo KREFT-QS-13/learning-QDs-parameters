@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torchvision import models
 import utilities.config as c
     
@@ -12,7 +13,7 @@ class ResNet(nn.Module):
         self.custom_head = custom_head if custom_head is not None else None
         
         # Modify the first convolutional layer to accept single-channel input
-        if base_model == 'resnet10' or base_model == 'resnet12':
+        if base_model == 'resnet10' or base_model == 'resnet12' or base_model == 'resnet16' or base_model == 'resnet14':
             self.base_model.conv1 = nn.Conv2d(1, filters_per_layer[0], kernel_size=3, stride=1, padding=1, bias=False)
         else:
             self.base_model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
@@ -69,14 +70,10 @@ class ResNet(nn.Module):
             weights = models.ResNet50_Weights.IMAGENET1K_V1 if pretrained else None
             return models.resnet50(weights=weights)
         # Custom ResNets
-        elif model_name == 'resnet10' or model_name == 'resnet12': 
+        elif model_name == 'resnet16' or model_name == 'resnet10' or model_name == 'resnet12' or model_name == 'resnet14':
             num_layers = int(model_name.split('resnet')[-1])
             print(f"Using custom ResNet with {num_layers} layers. No pretrained weights used in the model.")
             return CustomResNet(num_layers, filters_per_layer) if filters_per_layer is not None else CustomResNet(num_layers)
-        # elif 
-        #     num_layers = int(model_name.split('resnet')[-1])
-        #     print(f"Using custom ResNet with {num_layers} layers. No pretrained weights used in the model.")
-        #     return CustomResNet(num_layers)
         else:
             raise ValueError(f"Unsupported base model: {model_name}")
     
@@ -89,32 +86,49 @@ class ResNet(nn.Module):
         return self.name
 
 class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
+    """
+    Basic building block for ResNet architectures
+    """
+    expansion = 1
+    def __init__(self, in_channels, out_channels, stride=1):
         super(ResidualBlock, self).__init__()
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True)
-        )
-        self.conv2 = nn.Sequential(
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(out_channels)
-        )
-        self.downsample = downsample
 
+        # First convolutional layer
+        self.conv1 = nn.Conv2d(
+            in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False
+        )
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        
+        # Second convolutional layer    
+        self.conv2 = nn.Conv2d(
+            out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False
+        )
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        
+        # Shortcut connection (identity mapping or projection)
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels)
+            )
+
+    
     def forward(self, x):
-        res = x
-        if self.downsample is not None:
-            res = self.downsample(x)
+        # Main path
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
         
-        out = self.conv1(x)
-        out = self.conv2(out)
+        # Add shortcut connection
+        out += self.shortcut(x)
+        out = F.relu(out)
         
-        out += res
-        out = nn.ReLU(inplace=True)(out)
         return out
 
 class CustomResNet(nn.Module):
+    """
+    ResNet architecture with configurable depth
+    """
     def __init__(self, num_layers, filters_per_layer=[16,32,64,128]):
         super(CustomResNet, self).__init__()
         self.in_channels = 16 if filters_per_layer is None else filters_per_layer[0]
@@ -130,44 +144,58 @@ class CustomResNet(nn.Module):
         )
         
         if self.num_layers == 10:
-            # ResNet10: 2 blocks per stage, filter sizes [16,32,64,128]
-            self.layer1 = self._make_layer(self.filters_per_layer[0], 2, stride=1)
-            self.layer2 = self._make_layer(self.filters_per_layer[1], 2, stride=2)
-            self.layer3 = self._make_layer(self.filters_per_layer[2], 2, stride=2)
-            self.layer4 = self._make_layer(self.filters_per_layer[3], 2, stride=2)
+            self.layer1 = self._make_layer(ResidualBlock, self.filters_per_layer[0], 1, stride=1)
+            self.layer2 = self._make_layer(ResidualBlock, self.filters_per_layer[1], 1, stride=2)
+            self.layer3 = self._make_layer(ResidualBlock, self.filters_per_layer[2], 1, stride=2)
+            self.layer4 = self._make_layer(ResidualBlock, self.filters_per_layer[3], 1, stride=2)
             self.fc_features = self.filters_per_layer[3]
         elif self.num_layers == 12:
-            self.layer1 = self._make_layer(self.filters_per_layer[0], 2, stride=1)
-            self.layer2 = self._make_layer(self.filters_per_layer[1], 2, stride=2)
-            self.layer3 = self._make_layer(self.filters_per_layer[2],  3, stride=2)
-            self.layer4 = self._make_layer(self.filters_per_layer[3], 3, stride=2)
+            self.layer1 = self._make_layer(ResidualBlock, self.filters_per_layer[0], 2, stride=1)
+            self.layer2 = self._make_layer(ResidualBlock, self.filters_per_layer[1], 1, stride=2)
+            self.layer3 = self._make_layer(ResidualBlock, self.filters_per_layer[2], 1, stride=2)
+            self.layer4 = self._make_layer(ResidualBlock, self.filters_per_layer[3], 1, stride=2)
+            self.fc_features = self.filters_per_layer[3]
+        elif self.num_layers == 14:
+            self.layer1 = self._make_layer(ResidualBlock, self.filters_per_layer[0], 2, stride=1)
+            self.layer2 = self._make_layer(ResidualBlock, self.filters_per_layer[1], 2, stride=2)
+            self.layer3 = self._make_layer(ResidualBlock, self.filters_per_layer[2], 1, stride=2)
+            self.layer4 = self._make_layer(ResidualBlock, self.filters_per_layer[3], 1, stride=2)
+            self.fc_features = self.filters_per_layer[3]
+        elif self.num_layers == 16:
+            # ResNet10: 2 blocks per stage, filter sizes [16,32,64,128]
+            self.layer1 = self._make_layer(ResidualBlock, self.filters_per_layer[0], 2, stride=1)
+            self.layer2 = self._make_layer(ResidualBlock, self.filters_per_layer[1], 2, stride=2)
+            self.layer3 = self._make_layer(ResidualBlock, self.filters_per_layer[2], 2, stride=2)
+            self.layer4 = self._make_layer(ResidualBlock, self.filters_per_layer[3], 1, stride=2)
             self.fc_features = self.filters_per_layer[3]
         else:
-            raise NotImplementedError(f"ResNet{self.num_layers} is not implemented yet")
+            raise NotImplementedError(f"ResNet-{self.num_layers} is not implemented.")
         
         # Average pooling and flatten
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(self.fc_features , 2)
+        self.fc = nn.Linear(self.fc_features, 2)
 
-    def _make_layer(self, out_channels, num_blocks, stride=1):
-        downsample = None
-        if stride != 1 or self.in_channels != out_channels:
-            downsample = nn.Sequential(
-                nn.Conv2d(self.in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(out_channels)
-            )
-            
+        # Initialize weights
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+    def _make_layer(self, block, out_channels, num_blocks, stride):
+        strides = [stride] + [1] * (num_blocks - 1)
         layers = []
-        # First block might need downsampling
-        layers.append(ResidualBlock(self.in_channels, out_channels, stride, downsample))
         
-        self.in_channels = out_channels
-        # Remaining blocks
-        for _ in range(1, num_blocks):
-            layers.append(ResidualBlock(out_channels, out_channels))
+        for stride in strides:
+            layers.append(block(self.in_channels, out_channels, stride))
+            self.in_channels = out_channels * block.expansion
             
         return nn.Sequential(*layers)
-    
+
     def forward(self, x):
         x = self.conv1(x)
         

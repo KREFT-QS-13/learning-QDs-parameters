@@ -484,10 +484,10 @@ def ensure_path(path):
         print(f"Created directory: {path}")
     return path
 
-def count_directories_in_folder(config_tuple):
+def count_directories_in_folder(config_tuple, system_name:str=None):
     """Count the number of batch directories in a given folder."""
     K, N, S = config_tuple
-    path = c.get_path(K, N, S)
+    path = c.get_path(K, N, S, system_name)
     
     # # Ensure the path exists before trying to list directories
     # ensure_path(path)
@@ -496,11 +496,11 @@ def count_directories_in_folder(config_tuple):
     batch_list = [x for x in os.listdir(path) if re.compile(r"batch-\d").match(x)] 
     return sum(os.path.isdir(os.path.join(path, x)) for x in batch_list)
 
-def create_paths(config_tuple, path=None):
+def create_paths(config_tuple, system_name:str=None, path=None):
     """Creates paths for datapoints and images."""
     K, N, S = config_tuple
     if path is None:
-        path = c.get_path(K, N, S)
+        path = c.get_path(K, N, S, system_name)
         
     global PATH_IMG
     global PATH_DPS
@@ -779,24 +779,24 @@ def save_to_hfd5(dictionary: dict):
                         # Single item datasets
                         data_group.create_dataset('data', data=data)
 
-def get_batch_folder_name(batch_num: int, config_tuple: tuple[int, int, int]):
+def get_batch_folder_name(batch_num: int, config_tuple: tuple[int, int, int], system_name:str=None):
     """
         Get the batch folder name.
     """
     K, N, S = config_tuple
-    if batch_num <= count_directories_in_folder(config_tuple):
+    if batch_num <= count_directories_in_folder(config_tuple, system_name):
         return 'batch-' + str(batch_num)
     else:
-        print(ValueError(f"Batch number is too high! Max: {count_directories_in_folder(config_tuple)}!"))
+        print(ValueError(f"Batch number is too high! Max: {count_directories_in_folder(config_tuple, system_name)}!"))
         return None
 
-def get_path_hfd5(batch_num: int, config_tuple: tuple[int, int, int], v: bool=False, system_name:str=''):
+def get_path_hfd5(batch_num: int, config_tuple: tuple[int, int, int], v: bool=False, system_name:str=None):
     """
         Get the path to the hfd5 file.
         For now it is for testing and not yet finished.
     """
     K, N, S = config_tuple
-    batch_name = get_batch_folder_name(batch_num, config_tuple)
+    batch_name = get_batch_folder_name(batch_num, config_tuple, system_name)
     path = c.get_path(K, N, S, system_name)
     full_path_dps = os.path.join(path, batch_name, 'datapoints.h5')
           
@@ -808,13 +808,13 @@ def check_and_correct_img_name(img_name: str):
     else:
         return img_name
 
-def load_csd_img(batch_num: int, csd_name: str, config_tuple: tuple[int, int, int], show: bool=False):
+def load_csd_img(batch_num: int, csd_name: str, config_tuple: tuple[int, int, int], system_name:str=None, show: bool=False):
     """
         Load the PNG file 
     """
     K, N, S = config_tuple
     csd_name = check_and_correct_img_name(csd_name)
-    path = c.get_path(K, N, S)
+    path = c.get_path(K, N, S, system_name)
     path = os.path.join(path, get_batch_folder_name(batch_num, config_tuple), 'imgs', csd_name)
     
     img = Image.open(path)
@@ -827,12 +827,12 @@ def reconstruct_img_from_tensor(tensor:np.ndarray):
     return Image.fromarray((tensor.transpose(1, 2, 0) * 255).astype(np.uint8))
     # return Image.fromarray((tensor.transpose(1, 2, 0)))
 
-def reconstruct_img_with_matrices(batch_num: int, img_name: str, config_tuple: tuple[int, int, int], show: bool=False):
+def reconstruct_img_with_matrices(batch_num: int, img_name: str, config_tuple: tuple[int, int, int], system_name:str=None, show: bool=False):
     """
     Reconstruct image and get associated matrices from HDF5 file.
     """
     img_name = check_and_correct_img_name(img_name)
-    path = get_path_hfd5(batch_num, config_tuple)
+    path = get_path_hfd5(batch_num, config_tuple, system_name)
     print(f"The file path: {path}")
 
     with h5py.File(path, 'r') as f:
@@ -1032,8 +1032,8 @@ def plot_device_lattice(device: np.ndarray, sensors: list[tuple[int, int]], figs
     plt.tight_layout()
     return fig, ax
 
-def load_parameters(batch_num: int, img_name: str, config_tuple: tuple[int, int, int], 
-                    param_names: list[str], print_available_params: bool=False) -> dict:
+def load_parameters(batch_num: int, img_name: str, config_tuple: tuple[int, int, int],  param_names: list[str],
+                    system_name:str=None, print_available_params: bool=False) -> dict:
     """
     Load specific parameters from HDF5 file for a given image.
     
@@ -1041,13 +1041,14 @@ def load_parameters(batch_num: int, img_name: str, config_tuple: tuple[int, int,
         batch_num (int): Batch number
         img_name (str): Name of the image file
         config_tuple (tuple[int, int, int]): Tuple of (K, N, S)
+        system_name (str): Name of the system
         param_names (list[str]): List of parameter names to load
         print_available_params (bool): Whether to print available parameters (default: False)
     Returns:
         dict: Dictionary containing requested parameters
     """
     img_name = check_and_correct_img_name(img_name)
-    path = get_path_hfd5(batch_num, config_tuple)
+    path = get_path_hfd5(batch_num, config_tuple, system_name)
     
     if not os.path.exists(path):
         raise FileNotFoundError(f"HDF5 file not found at: {path}")

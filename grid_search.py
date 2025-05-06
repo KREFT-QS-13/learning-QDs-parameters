@@ -11,7 +11,7 @@ import utilities.config as c
 import utilities.model_utils as mu
 from models.transfer_CNN import ResNet
 
-def grid_search(config_tuple:tuple, datasize_cut:int=64000, save_dir:str='Results'):
+def grid_search(config_tuple:tuple, datasize_cut:int=32000, save_dir:str='Results', system_name:str=''):
     """
     Perform grid search for ResNet hyperparameters.
     """
@@ -20,8 +20,8 @@ def grid_search(config_tuple:tuple, datasize_cut:int=64000, save_dir:str='Result
     # param_grid = {
     #     'batch_size': [64],
     #     'learning_rate': [0.01],
-    #     'base_model': ['resnet18'],
-    #     'dropout': [0.7],
+    #     'base_model': ['resnet10'],
+    #     'dropout': [0.25],
     #     'custom_head': [
     #         [1024, 512], 
     #     ]
@@ -29,36 +29,38 @@ def grid_search(config_tuple:tuple, datasize_cut:int=64000, save_dir:str='Result
     
     # Define parameter grids
     param_grid = {
-        'base_model': ['resnet18'], # 1
-        'batch_size': [64, 512], # 4
-        'learning_rate': [0.0001], # 4
-        # 'dropout': [0.0, 0.25, 0.5], # 3
-        'dropout': [0.1], # 3
+        'base_model': ['resnet18', 'resnet10'], # 2
+        'batch_size': [32], # 1
+        'learning_rate': [0.0001], # 1
+        'dropout': [0.1], # 1
         'custom_head': [
-            [2048, 1024],
-            [4096, 512],
-            [2048, 512, 128],
-            [2048, 1024, 512],
-            [2048, 1024, 512, 256],
-            [4096, 1024, 256, 64],
-        ] # 3
+            [8192, 256],
+        ] # 1
     }
 
     # Load data
     start_time = time.time()
     print("Loading and preparing datasets...")
-    X, y = mu.prepare_data(config_tuple, datasize_cut=datasize_cut, all_batches=False, batches=np.arange(1,65))
-    print(f'Successfully prepared {len(X)} datapoints.\n')
+    maxwell_mode = True
+    X, y = mu.prepare_data(config_tuple, 
+                          param_names=['csd', 'C_DD', 'C_DG'], 
+                          all_batches=False,
+                          batches=np.arange(1,33), 
+                          datasize_cut=datasize_cut,
+                          maxwell=maxwell_mode,
+                          system_name=system_name)
+    param_names_to_save = ['csd', 'C_DD', 'C_DG', f'{maxwell_mode}']
+    print(f'Successfully prepared {len(X)} datapoints with input size {c.RESOLUTION}x{c.RESOLUTION}.\n')
     end_time = time.time()
     print(f"Time taken to prepare data: {end_time - start_time:.2f} seconds")
 
     # Training parameters that stay constant
     base_train_params = {
-        'epochs': 20,
-        'val_split': 0.15,
-        'test_split': 0.15,
+        'epochs': 30,
+        'val_split': 0.1,
+        'test_split': 0.1,
         'random_state': 42,
-        'epsilon': 1.0,
+        'epsilon': 0.5,
         'init_weights': None
     }
 
@@ -84,10 +86,10 @@ def grid_search(config_tuple:tuple, datasize_cut:int=64000, save_dir:str='Result
         model_config = {
             'model': ResNet,
             'params': {
-                'K': K,  # Adjust based on your needs
-                'name': f"{current_params['base_model']}_model",
+                'config_tuple': config_tuple,
                 'base_model': current_params['base_model'],
-                'pretrained': True,
+                'name': f"{current_params['base_model']}-{N}-{S}",
+                'pretrained': False,
                 'dropout': current_params['dropout'],
                 'custom_head': current_params['custom_head']
             }
@@ -102,7 +104,12 @@ def grid_search(config_tuple:tuple, datasize_cut:int=64000, save_dir:str='Result
         
         # Train and evaluate model
         try:
-            results = mu.train_evaluate_and_save_models([model_config], X, y, train_params, save_dir=save_dir)
+            results = mu.train_evaluate_and_save_models(config_tuple,
+                                                        [model_config], 
+                                                        X, y,
+                                                        param_names_to_save,
+                                                        train_params, 
+                                                        save_dir=save_dir)
             
             # Get validation MSE from the results
             val_mse = min(results[0]['history']['val_mse'])
@@ -113,7 +120,7 @@ def grid_search(config_tuple:tuple, datasize_cut:int=64000, save_dir:str='Result
                 best_config = current_params
                 # Get the path to the saved model
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                best_model_path = f"Results/{current_params['base_model']}/{current_params['base_model']}_model_{timestamp}"
+                best_model_path = f"Results/{current_params['base_model']}/{current_params['base_model']}-{N}-{S}_{timestamp}"
                 
                 print("\nNew best configuration found!")
                 print(f"Validation MSE: {val_mse}")
@@ -139,14 +146,16 @@ def grid_search(config_tuple:tuple, datasize_cut:int=64000, save_dir:str='Result
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Grid search for ResNet hyperparameters.")
     parser.add_argument('--save_dir', type=str, default='Results', help="Directory to save the results.")
-    parser.add_argument('-K', type=int, default=2, help="The number of all quanutum dots in the system (including sensors).")
-    parser.add_argument('-S', type=int, default=0, help="Number of sensors in the system.")
+    parser.add_argument('-K', type=int, required=True, help="The number of all quantum dots in the system (including sensors).")
+    parser.add_argument('-S', type=int, required=True, help="Number of sensors in the system.")
+    parser.add_argument('--system_name', type=str, default='', help="The name of the system, i.e. the name of the folder where the datasets is saved.")
     
-
     args = parser.parse_args()
     K = args.K
     S = args.S
+    N = K - S
     save_dir = args.save_dir
-    config_tuple = (K, K-S, S) # (K, N, S)
+    system_name = args.system_name
+    config_tuple = (K, N, S)
 
-    grid_search(config_tuple, save_dir=save_dir)
+    grid_search(config_tuple, save_dir=save_dir, system_name=system_name)

@@ -3,20 +3,196 @@ import torch.nn as nn
 from torchvision import models
 import utilities.config as c
 
-from transfer_CNN import ResNet
+from models.transfer_CNN import ResNet
 
-
-class MultiheadCNN(nn.Module):
-    def __init__(self, config_tuple, name="multihead_model", base_model='resnet18', pretrained=True, 
-                 dropout:float=None, custom_head:list=None, filters_per_layer:list=[16,32,64,128]):
-        super(MultiheadCNN, self).__init__()
-        self.name = name
-        self.cnn_branch = ResNet(config_tuple, name="base_model", base_model=base_model, pretrained=pretrained, 
-                                dropout=dropout, custom_head=custom_head, filters_per_layer=filters_per_layer)
+class PMAAttention(nn.Module):
+    def __init__(self, input_dim, num_heads=4, dropout=0.1):
+        """
+        Pooling-by-Multi-Head-Attention (PMA) module.
         
-        self.env_branch = nn.Sequential(
-            nn.Linear(self.cnn_branch.fc.out_features, 1024),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout),
-            nn.Linear(1024, 1)
-        )
+        Args:
+            input_dim (int): Dimension of input features
+            num_heads (int): Number of attention heads
+            dropout (float): Dropout probability
+        """
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = input_dim // num_heads
+        assert self.head_dim * num_heads == input_dim, "input_dim must be divisible by num_heads"
+        
+        # Multi-head attention layers
+        self.q_proj = nn.Linear(input_dim, input_dim)
+        self.k_proj = nn.Linear(input_dim, input_dim)
+        self.v_proj = nn.Linear(input_dim, input_dim)
+        
+        # Output projection
+        self.out_proj = nn.Linear(input_dim, input_dim)
+        
+        # Layer normalization
+        self.layer_norm = nn.LayerNorm(input_dim)
+        
+        # Dropout
+        self.dropout = nn.Dropout(dropout)
+        
+        # Temperature parameter for softmax
+        self.temperature = nn.Parameter(torch.ones(1) * 0.1)
+        
+    def forward(self, x, return_weights=False):
+        """
+        Forward pass of PMA attention.
+        
+        Args:
+            x (torch.Tensor): Input tensor of shape [batch_size, num_branches, features]
+            return_weights (bool): Whether to return attention weights
+            
+        Returns:
+            torch.Tensor: Attended features of shape [batch_size, features]
+            torch.Tensor (optional): Attention weights of shape [batch_size, num_heads, num_branches]
+        """
+        batch_size, num_branches, _ = x.size()
+        
+        # Layer normalization
+        x = self.layer_norm(x)
+        
+        # Project queries, keys, and values
+        q = self.q_proj(x).view(batch_size, num_branches, self.num_heads, self.head_dim)
+        k = self.k_proj(x).view(batch_size, num_branches, self.num_heads, self.head_dim)
+        v = self.v_proj(x).view(batch_size, num_branches, self.num_heads, self.head_dim)
+        
+        # Transpose for attention computation
+        q = q.transpose(1, 2)  # [batch_size, num_heads, num_branches, head_dim]
+        k = k.transpose(1, 2)  # [batch_size, num_heads, num_branches, head_dim]
+        v = v.transpose(1, 2)  # [batch_size, num_heads, num_branches, head_dim]
+        
+        # Compute attention scores
+        scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim ** 0.5)
+        scores = scores / self.temperature
+        
+        # Apply softmax to get attention weights
+        attn_weights = torch.softmax(scores, dim=-1)
+        attn_weights = self.dropout(attn_weights)
+        
+        # Apply attention weights to values
+        context = torch.matmul(attn_weights, v)  # [batch_size, num_heads, num_branches, head_dim]
+        
+        # Reshape and combine heads
+        context = context.transpose(1, 2).contiguous()  # [batch_size, num_branches, num_heads, head_dim]
+        context = context.view(batch_size, num_branches, -1)  # [batch_size, num_branches, input_dim]
+        
+        # Project to output dimension
+        output = self.out_proj(context)
+        
+        # Sum over branches
+        output = output.sum(dim=1)  # [batch_size, input_dim]
+        
+        if return_weights:
+            return output, attn_weights
+        return output
+
+
+class MultiBranchCNN(nn.Module):
+    def __init__(self, config_tuple, num_branches=4, name="multibranch_model", base_model='resnet18', 
+                 pretrained=True, dropout:float=0.5, custom_head:list=None, 
+                 filters_per_layer:list=[16,32,64,128], num_attention_heads=4,
+                 prediction_head:list=None):
+        super(MultiBranchCNN, self).__init__()
+        self.name = name
+        self.num_branches = num_branches
+        
+        # Create multiple ResNet branches
+        self.branches = nn.ModuleList([
+            ResNet(config_tuple, name=f"branch_{i}", base_model=base_model, 
+                  pretrained=pretrained, dropout=dropout, 
+                  custom_head=custom_head, filters_per_layer=filters_per_layer)
+            for i in range(num_branches)
+        ])
+        
+        # Get the output features from the first branch to set up attention
+        branch_output_dim = self.branches[0].custom_head[-1].out_features
+        
+        # PMA attention module to combine features from different branches
+        self.attention = PMAAttention(branch_output_dim, num_heads=num_attention_heads, dropout=dropout)
+        
+        # Final prediction head
+        K, N, S = config_tuple
+        if c.MODE == 1:
+            output_size = K * (K + 1) // 2 + K**2
+        elif c.MODE == 2:
+            output_size = 2*K
+        elif c.MODE == 3:
+            output_size = K
+        
+
+        if prediction_head is not None:
+            layers = []
+            in_features = branch_output_dim
+            
+            # Build layers based on the provided list
+            for out_features in prediction_head[:-1]:  # All layers except the last one
+                layers.extend([
+                    nn.Linear(in_features, out_features),
+                    nn.ReLU(inplace=True),
+                    nn.Dropout(dropout)
+                ])
+                in_features = out_features
+            
+            # Add final layer to match required output size
+            layers.append(nn.Linear(in_features, output_size))
+            
+            self.prediction_head = nn.Sequential(*layers)
+        else:
+            # Default architecture if no custom_head is provided
+            self.prediction_head = nn.Sequential(
+                nn.Linear(num_features, 512),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout),
+                nn.Linear(512, 256),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout),
+                nn.Linear(256, output_size)
+            )
+
+    def forward(self, x, return_attention=False):
+        """
+        Forward pass of the multi-branch CNN.
+        
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, num_branches, channels, height, width)
+            return_attention (bool): Whether to return attention weights
+            
+        Returns:
+            torch.Tensor: Output tensor of shape (batch_size, output_size)
+            torch.Tensor (optional): Attention weights if return_attention is True
+        """
+        batch_size = x.size(0)
+        
+        # Verify input shape matches number of branches
+        if x.size(1) != self.num_branches:
+            raise ValueError(f"Input tensor has {x.size(1)} branches but model expects {self.num_branches} branches")
+        
+        # Process each branch
+        branch_outputs = []
+        for i in range(self.num_branches):
+            branch_input = x[:, i]  # Select the i-th image for this branch
+            branch_output = self.branches[i](branch_input)
+            branch_outputs.append(branch_output)
+        
+        # Stack branch outputs
+        # Shape: (batch_size, num_branches, features)
+        stacked_outputs = torch.stack(branch_outputs, dim=1)
+        
+        # Apply PMA attention to combine branch outputs
+        if return_attention:
+            attended_features, attention_weights = self.attention(stacked_outputs, return_weights=True)
+        else:
+            attended_features = self.attention(stacked_outputs)
+        
+        # Final prediction
+        output = self.prediction_head(attended_features)
+        
+        if return_attention:
+            return output, attention_weights
+        return output
+    
+    def __str__(self):
+        return self.name
