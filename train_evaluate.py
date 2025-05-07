@@ -105,13 +105,13 @@ def main():
     # Load your data
     print("Loading and preparing datasets...")
     
-    datasize_cut = 100
+    datasize_cut = 32000
     maxwell_mode = True
     # for training with csd:
     X,y = mu.prepare_data(config_tuple, 
                           param_names=['csd', 'C_DD', 'C_DG'], 
                           all_batches=False,
-                          batches=np.arange(1,3), 
+                          batches=np.arange(1,33), 
                           datasize_cut=datasize_cut,
                           maxwell=maxwell_mode,
                           system_name=system_name)

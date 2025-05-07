@@ -128,39 +128,64 @@ def preprocess_csd(csd_array: np.ndarray, input_type: str = 'csd'):
     Preprocess CSD or gradient array for model input.
     
     Args:
-        csd_array (np.ndarray): Input array of shape (4,RESOLUTION,RESOLUTION) or (1,RESOLUTION,RESOLUTION)
+        csd_array (np.ndarray): Input array of shape (N, C, H, W) for multi-branch CNN,
+                               (C, H, W) for single channel, or (H, W) for 2D input
         input_type (str): Type of input - 'csd' or 'gradient'
     
     Returns:
-        torch.Tensor: Preprocessed tensor of shape (1, RESOLUTION, RESOLUTION)
+        torch.Tensor: Preprocessed tensor of shape (N, 1, H, W) for multi-branch CNN
+                     or (1, H, W) for single channel
     """
     # Check input
     if not isinstance(csd_array, np.ndarray):
         raise TypeError(f"Input must be a numpy.ndarray, got {type(csd_array)}")
     
-    # if input_type == 'csd_gradient':
-    #     csd_array = convert_csd_gradient_to_csd_img(csd_array)
-    
     # Handle different input shapes    
-    if len(csd_array.shape) == 3:  # (C, H, W)
+    if len(csd_array.shape) == 4:  # (N, C, H, W) - Multi-branch CNN
+        N, C, H, W = csd_array.shape
+        # Process each branch
+        processed_branches = []
+        for i in range(N):
+            branch = csd_array[i]  # Get (C, H, W)
+            if C == 4:  # RGBA
+                branch = np.transpose(branch, (1, 2, 0))  # (H, W, C)
+                branch = branch[:, :, :3]  # Keep only RGB
+            elif C == 1:  # Already single channel
+                processed_branches.append(torch.FloatTensor(branch))
+                continue
+                
+            # Convert to tensor and normalize
+            transform = transforms.Compose([
+                transforms.ToPILImage(),
+                transforms.Grayscale(num_output_channels=1),
+                transforms.ToTensor(),
+            ])
+            processed_branches.append(transform(branch))
+        
+        # Stack all branches
+        return torch.stack(processed_branches)
+        
+    elif len(csd_array.shape) == 3:  # (C, H, W)
         if csd_array.shape[0] == 4:  # RGBA
             csd_array = np.transpose(csd_array, (1, 2, 0))
             csd_array = csd_array[:, :, :3]  # Keep only RGB
         elif csd_array.shape[0] == 1:  # Already single channel
             return torch.FloatTensor(csd_array)
+            
+        # Convert to tensor and normalize
+        transform = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Grayscale(num_output_channels=1),
+            transforms.ToTensor(),
+        ])
+        return transform(csd_array)
+        
     elif len(csd_array.shape) == 2:  # (H, W)
         csd_array = csd_array[None, :, :]  # Add channel dimension
         return torch.FloatTensor(csd_array)
     
-    # Convert to tensor and normalize
-    transform = transforms.Compose([
-        transforms.ToPILImage(),  # Convert NumPy array to PIL Image
-        transforms.Grayscale(num_output_channels=1),  # Convert to grayscale with a single channel
-        transforms.ToTensor(),  # Converts grayscale image to tensor with shape (1, H, W) in [0, 1]
-        # transforms.Normalize(mean=[0.5], std=[0.5])  # Normalize to [-1, 1]
-    ])
-    
-    return transform(csd_array)
+    else:
+        raise ValueError(f"Unexpected input shape: {csd_array.shape}. Expected (N,C,H,W), (C,H,W), or (H,W)")
 
 def get_maxwell_capacitance_matrices(C_DD:np.ndarray, C_DG:np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -333,8 +358,8 @@ def show_image_from_tensor(tensor, unnormalize=False, save_path=None):
     # Create figure with specific size and DPI
     plt.figure(figsize=(c.RESOLUTION/c.DPI, c.RESOLUTION/c.DPI), dpi=c.DPI, layout='tight')
     
-    # Display the image
-    plt.imshow(image_array)
+    # Display the image with grayscale colormap
+    plt.imshow(image_array, cmap='gray')
     plt.axis('off')
     plt.tight_layout(pad=0)
     
