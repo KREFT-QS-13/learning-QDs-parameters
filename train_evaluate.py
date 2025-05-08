@@ -1,7 +1,5 @@
 import argparse
 import torch
-import torch.nn as nn
-from torchsummary import summary
 import numpy as np
 import time
 

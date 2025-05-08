@@ -5,8 +5,8 @@ import numpy as np
 PATH_0 = "./"
 # PATH_0 = "../../data1/Project_data_and_results/"
 
-# PATH_TO_DATASETS = "datasets/"
-PATH_TO_DATASETS = "ALICE/"
+PATH_TO_DATASETS = "datasets/"
+# PATH_TO_DATASETS = "ALICE/"
 
 PATH_TO_RESULTS = "Results/"
 

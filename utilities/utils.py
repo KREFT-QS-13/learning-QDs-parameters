@@ -489,7 +489,7 @@ def count_directories_in_folder(config_tuple, system_name:str=None):
     K, N, S = config_tuple
     path = c.get_path(K, N, S, system_name)
     
-    # # Ensure the path exists before trying to list directories
+    # Ensure the path exists before trying to list directories
     # ensure_path(path)
     
     # Now safely list directories
@@ -508,7 +508,7 @@ def create_paths(config_tuple, system_name:str=None, path=None):
     # Ensure base path exists
     ensure_path(path)
     
-    batch_name = 'batch-' + str(count_directories_in_folder(config_tuple)+1)
+    batch_name = 'batch-' + str(count_directories_in_folder(config_tuple, system_name)+1)
     full_path = os.path.join(path, batch_name)
     
     # Create batch directory
@@ -529,7 +529,7 @@ def clean_batch():
     # else:
     #     for f in os.listdir(PATH_IMG):
     #         os.remove(os.path.join(PATH_IMG, f))
-        
+    #         
     #     os.rmdir(PATH_IMG)
 
     if not os.path.isfile(PATH_DPS):
@@ -538,77 +538,6 @@ def clean_batch():
         except Exception as e:
             print("Unable to clean empty batch folder!")
             print(f'{e}')
-
-# def save_img_csd(config_tuple, csd_plot, cuts):
-#     """
-#     Save the CSD image as a PNG file with a unique name.
-    
-#     Args:
-#         config_tuple (tuple): (K, N, S) configuration
-#         csd_plot: Either a single figure or list of figures
-#         cut (np.ndarray): Cut array used to generate the CSD
-    
-#     Returns:
-#         tuple: (unique_id, list of (path, name) for saved images)
-#     """
-#     K, N, S = config_tuple
-    
-#     if isinstance(csd_plot, list):
-#         csd_plot = np.array(csd_plot)
-
-#     # Generate base name
-#     base_name = ''.join([str(random.randint(0, 9)) for _ in range(10)])
-    
-#     # Create directory for this group
-#     group_dir = os.path.join(PATH_IMG, base_name)
-#     ensure_path(group_dir)
-
-#     saved_files = []
-    # 
-    # # Handle multiple cuts
-    # for cut_idx in range(len(cuts)):
-    #     # Add cut indices to name
-    #     indices = [np.argwhere(c == 1).squeeze().tolist() for c in cuts[cut_idx]]
-    #     cut_name = '_'+''.join(str(i) for i in indices)
-    #     print(f"Shape of csd_plot: {csd_plot.shape}")
-
-
-    #     if S > 0:  # Handle sensor data
-    #         for sensor_idx in range(csd_plot.shape[-1]):
-    #             img_name = f"{base_name}{cut_name}_s{sensor_idx}.png"
-    #             full_path_img = os.path.join(group_dir, img_name)
-                    
-    #             fig = plt.figure(figsize=(c.RESOLUTION/c.DPI, c.RESOLUTION/c.DPI), dpi=c.DPI)
-    #             plt.pcolormesh(csd_plot[cut_idx, :, :, sensor_idx])
-    #             plt.axis('off')
-    #             plt.tight_layout(pad=0)
-                    
-    #             plt.savefig(full_path_img, format='png', bbox_inches='tight', 
-    #                         pad_inches=0, dpi=c.DPI)
-    #             plt.close(fig)
-                    
-    #             saved_files.append((full_path_img, img_name))
-    #     else:  # No sensors
-    #         img_name = f"{base_name}{cut_name}.png"
-    #         full_path_img = os.path.join(group_dir, img_name)
-            
-    #         if isinstance(csd_plot, (list, np.ndarray)):
-    #             data_to_plot = csd_plot[cut_idx] if isinstance(csd_plot, np.ndarray) else csd_plot[cut_idx][0]
-    #             fig = plt.figure(figsize=(c.RESOLUTION/c.DPI, c.RESOLUTION/c.DPI), dpi=c.DPI)
-    #             plt.pcolormesh(data_to_plot)
-    #             plt.axis('off')
-    #             plt.tight_layout(pad=0)
-    #             plt.savefig(full_path_img, format='png', bbox_inches='tight', 
-    #                       pad_inches=0, dpi=c.DPI)
-    #             plt.close(fig)
-    #         else:
-    #             csd_plot.savefig(full_path_img, format='png', bbox_inches='tight', 
-    #                            pad_inches=0, dpi=c.DPI)
-    #             plt.close(csd_plot)
-            
-    #         saved_files.append((full_path_img, img_name))
-    
-    # return base_name, saved_files 
 
 def save_img_csd_from_figs(config_tuple, figs, cuts):
     """
@@ -946,12 +875,8 @@ def generate_datapoint(args):
             fig, _ = plot_CSD(x, y, csd, poly, only_labels=False)
             gradient = np.gradient(csd.squeeze(),axis=0)+np.gradient(csd.squeeze(),axis=1)
             return (C_DD, C_DG, ks, cut, x_vol, y_vol, csd, poly, sensor, fig, gradient, device, sensors_coordinates)
-        # elif S == 1:
-        #     fig, _ = plot_CSD(x, y, sensor, poly)
-        #     gradient = np.gradient(sensor,axis=0)+np.gradient(sensor,axis=1)
-        #     return (C_DD, C_DG, ks, cut, x_vol, y_vol, csd, poly, sensor, fig, gradient, device, sensors_coordinates)
         elif S >= 1:
-            figs = [fig for fig, _ in plot_CSD(x, y, sensor, poly)]
+            figs = [fig for fig, _ in plot_CSD(x, y, sensor, poly, only_labels=True, only_edges=True)]
             gradients = [np.gradient(s,axis=0)+np.gradient(s,axis=1) for s in sensor]
             return (C_DD, C_DG, ks, cut, x_vol, y_vol, csd, poly, sensor, figs, gradients, device, sensors_coordinates)
 

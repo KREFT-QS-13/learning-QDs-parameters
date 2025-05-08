@@ -38,7 +38,11 @@ def main():
     parser.add_argument('--const_sensors_radius', action='store_true', 
                         help='If True, the sensors radius will be constant. Default value is False.')
     
-    parser.add_argument('--system_name', type=str, default=None)
+    parser.add_argument('--system_name', type=str, default=None,
+                        help='Name of the predefined system configuration (e.g., "sys_2_1", "sys_3_2")')
+    
+    parser.add_argument('--noise_level', type=str, default=None,
+                        help='Prefix for the dataset folder name showcasing the noise level. Remeber the noise amplitdes has to be manually changed in the config.py file (e.g., "n2e5" for noise amplitude 2e-5.)')
 
     parser.add_argument('--all_euclidean_cuts', action='store_true', 
                         help='If True, all euclidean cuts will be used to generate datapoints. Default value is False.')
@@ -56,6 +60,7 @@ def main():
     sensors_radius = args.sensors_radius
     sensors_angle = args.sensors_angle
     system_name = args.system_name
+    noise_level = args.noise_level
     all_euclidean_cuts = args.all_euclidean_cuts
     const_sensors_radius = args.const_sensors_radius
     cut = args.cut
@@ -102,6 +107,7 @@ def main():
     print("Dataset generation configuration:")
     print(f"K: {K}, N: {N_dots}, S: {S}")
     print(f"System name: {system_name}")
+    print(f"Noise level (folder prefix): {noise_level}")
     print(f"Sensors radius: {sensors_radius if sensors_radius is not None else 'None'}")
     print(f"Sensors angle: {sensors_angle if sensors_angle is not None else 'None'}")
     print(f"All euclidean cuts: {all_euclidean_cuts}")
@@ -111,7 +117,7 @@ def main():
     for r in range(R):
         print(f"Batch number: {r+1}/{R}.")
         main_start = time.time()
-        u.create_paths(config_tuple)
+        u.create_paths(config_tuple, system_name=noise_level)
         
         # Prepare arguments for multiprocessing
         pool_args = [(x_vol, y_vol, ks, device, i, N_batch, config_tuple, sensors_radius,
