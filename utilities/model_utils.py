@@ -344,7 +344,7 @@ def tensor_to_image(tensor, unnormalize=True):
 
     return image_array
 
-def show_image_from_tensor(tensor, unnormalize=False, save_path=None):
+def show_image_from_tensor(tensor, unnormalize=False, save_path=None, cmap='gray'):
     """
     Display an image from a PyTorch tensor.
 
@@ -359,7 +359,7 @@ def show_image_from_tensor(tensor, unnormalize=False, save_path=None):
     plt.figure(figsize=(c.RESOLUTION/c.DPI, c.RESOLUTION/c.DPI), dpi=c.DPI, layout='tight')
     
     # Display the image with grayscale colormap
-    plt.imshow(image_array, cmap='gray')
+    plt.imshow(image_array, cmap=cmap)
     plt.axis('off')
     plt.tight_layout(pad=0)
     

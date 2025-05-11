@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
+import os
 
 def exp1_plot_mse_mae_r2(csv_path:str, system_name:str, output_path:str='Results/Figs', cmap:str='viridis', r2_amplitude:float=1e5, r2_scale:int=0.05, 
                          min_r2_color:str='#ffeda0', max_r2_color:str='#f03b20'):
@@ -167,3 +168,103 @@ def exp1_plot_mse_mae_r2(csv_path:str, system_name:str, output_path:str='Results
         plt.close()
     else:
         plt.show() 
+
+def prepare_csv_stats(csv_path: str, 
+                     columns_to_keep: list = None,
+                     columns_to_avg: list = None,
+                     group_by: str = 'base_model',
+                     seed_column: str = 'seed',
+                     seeds: list = None,
+                     output_path: str = None) -> pd.DataFrame:
+    """
+    Process CSV data to calculate statistics (mean and std) across different seeds for specified columns.
+    
+    Args:
+        csv_path (str): Path to the input CSV file (must end with .csv)
+        columns_to_keep (list): List of column names to keep in the output. If None, keeps all columns
+        columns_to_avg (list): List of column names to calculate mean and std for. If None, uses numeric columns
+        group_by (str): Column name to group by (default: 'base_model')
+        seed_column (str): Column name containing seed values (default: 'seed')
+        output_path (str): Path to save the processed CSV (must end with .csv).
+        seeds (list): List of seed values to process. If None, uses all seeds.
+    Returns:
+        pd.DataFrame: Processed dataframe with statistics
+        
+    Raises:
+        ValueError: If input or output paths are not valid CSV files
+        PermissionError: If there are permission issues accessing the files
+        FileNotFoundError: If the input file doesn't exist
+    """
+    # Validate input path
+    if not csv_path.endswith('.csv'):
+        raise ValueError(f"Input path must be a CSV file, got: {csv_path}")
+    if not os.path.isfile(csv_path):
+        raise FileNotFoundError(f"Input file not found: {csv_path}")
+    
+    # Validate output path if provided
+    if output_path is not None:
+        if not output_path.endswith('.csv'):
+            raise ValueError(f"Output path must be a CSV file, got: {output_path}")
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    
+    try:
+        # Read the CSV file
+        df = pd.read_csv(csv_path)
+    except PermissionError:
+        raise PermissionError(f"Permission denied: Cannot read file {csv_path}")
+    except Exception as e:
+        raise Exception(f"Error reading CSV file: {str(e)}")
+    
+    # If columns_to_keep is None, keep all columns
+    if columns_to_keep is None:
+        columns_to_keep = df.columns.tolist()
+    
+    # If columns_to_avg is None, use all numeric columns except the group_by and seed columns
+    if seeds is not None:
+        df = df[df[seed_column].isin(seeds)]
+
+    if columns_to_avg is None:
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        columns_to_avg = [col for col in numeric_cols if col not in [group_by, seed_column]]
+    
+    # Create a copy of the dataframe with only the columns we want to keep
+    stats_df = df[columns_to_keep].copy()
+    
+    # Group by the specified column and calculate statistics
+    stats_dict = {}
+    for col in columns_to_avg:
+        if col in df.columns:
+            # Calculate mean and std for each group
+            mean_col = df.groupby(group_by)[col].mean()
+            std_col = df.groupby(group_by)[col].std()
+            
+            # Add to stats dictionary
+            stats_dict[f'{col}_mean'] = mean_col
+            stats_dict[f'{col}_std'] = std_col
+    
+    # Create a new dataframe with the statistics
+    stats_temp = pd.DataFrame(stats_dict)
+    stats_temp.reset_index(inplace=True)
+    
+    # Merge the statistics with the original dataframe
+    # First, get unique rows for the group_by column to avoid duplicates
+    unique_groups = stats_df.drop_duplicates(subset=[group_by])
+    # Merge the statistics with the unique groups
+    stats_df = pd.merge(unique_groups, stats_temp, on=group_by, how='left')
+    
+    # Save the processed data
+    if output_path is None:
+        output_path = csv_path
+    
+    if output_path:
+        try:
+            # Check if the output path already exists
+            stats_df.to_csv(output_path, index=False)
+            print(f"Processed data saved to {output_path}")
+        except PermissionError:
+            raise PermissionError(f"Permission denied: Cannot write to file {output_path}")
+        except Exception as e:
+            raise Exception(f"Error saving CSV file: {str(e)}")
+    
+    return stats_df

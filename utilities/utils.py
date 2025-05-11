@@ -957,6 +957,7 @@ def plot_device_lattice(device: np.ndarray, sensors: list[tuple[int, int]], figs
     plt.tight_layout()
     return fig, ax
 
+
 def load_parameters(batch_num: int, img_name: str, config_tuple: tuple[int, int, int],  param_names: list[str],
                     system_name:str=None, print_available_params: bool=False) -> dict:
     """

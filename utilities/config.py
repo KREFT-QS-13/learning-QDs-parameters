@@ -5,8 +5,8 @@ import numpy as np
 PATH_0 = "./"
 # PATH_0 = "../../data1/Project_data_and_results/"
 
-PATH_TO_DATASETS = "datasets/"
-# PATH_TO_DATASETS = "ALICE/"
+# PATH_TO_DATASETS = "datasets/"
+PATH_TO_DATASETS = "ALICE/"
 
 PATH_TO_RESULTS = "Results/"
 
@@ -30,8 +30,8 @@ dd_std = 2.0 # 3.0, 5.0
 scale = 1.0
 
 tunnel_coupling_const = 100*1e-6    
-slow_noise_amplitude = 2*1e-4  # 1e-5 - 1e-7
-fast_noise_amplitude = 2*1e-4 # 1e-5 - 1e-7
+slow_noise_amplitude = 1e-4  # 1e-5 - 1e-7
+fast_noise_amplitude = 1e-4 # 1e-5 - 1e-7
 
 # noise case:
 # slow_noise_amplitude = 1e-99 

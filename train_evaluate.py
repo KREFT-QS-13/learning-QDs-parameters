@@ -23,9 +23,12 @@ def main():
     parser.add_argument('--system_name', type=str, required=False, default='',   
                         help='The name of the system, i.e. the name of the folder where the datasets is saved.')
     
+    parser.add_argument('-GCM', action='store_true', default=False,
+                       help='If set, use General CM (True), otherwise use Local CM (False)')
     args = parser.parse_args()
 
     mode = args.mode 
+    maxwell_mode = args.GCM
     K = args.K
     S = args.S
     N = K - S
@@ -42,7 +45,51 @@ def main():
     
     # Define model configurations
     model_configs = [
+        {
+            'model': ResNet, 
+            'params': {
+                'config_tuple': config_tuple,
+                'base_model': 'resnet10',
+                'name': f'Rn10-{N}-{S}-{system_name}',
+                'pretrained': False,
+                'dropout': 0.1,
+                'custom_head': [4096, 512],
+             }
+        },
         # {
+        #     'model': ResNet, 
+        #     'params': {
+        #         'config_tuple': config_tuple,
+        #         'base_model': 'resnet12',
+        #         'name': f'Rn12-{N}-{S}-{system_name}',
+        #         'pretrained': False,
+        #         'dropout': 0.1,
+        #         'custom_head': [4096, 512],
+        #      }
+        # },
+        # {
+        #     'model': ResNet, 
+        #     'params': {
+        #         'config_tuple': config_tuple,
+        #         'base_model': 'resnet14',
+        #         'name': f'Rn14-{N}-{S}-{system_name}',
+        #         'pretrained': False,
+        #         'dropout': 0.1,
+        #         'custom_head': [4096, 512],
+        #      }
+        # },
+        # {
+        #     'model': ResNet, 
+        #     'params': {
+        #         'config_tuple': config_tuple,
+        #         'base_model': 'resnet16',
+        #         'name': f'Rn16-{N}-{S}-{system_name}',
+        #         'pretrained': False,
+        #         'dropout': 0.1,
+        #         'custom_head': [4096, 512],
+        #      }
+        # },
+        #         {
         #     'model': ResNet, 
         #     'params': {
         #         'config_tuple': config_tuple,
@@ -50,7 +97,7 @@ def main():
         #         'name': f'Rn18-{N}-{S}-{system_name}',
         #         'pretrained': False,
         #         'dropout': 0.1,
-        #         'custom_head': [8192, 256],
+        #         'custom_head': [4096, 512],
         #      }
         # },
         # {
@@ -65,27 +112,26 @@ def main():
         #      }
         # },
 
-
-        {
-            'model': MultiBranchCNN,
-            'params': {
-                'config_tuple': config_tuple,
-                'name': 'multibranch_model',
-                'base_model': 'resnet18',
-                'num_branches': 6,
-                'num_attention_heads': 4,
-                'custom_head': [2048, 1024],
-                'prediction_head': [512, 256],
-                'dropout': 0.1
-            }
-        }
+        # {
+        #     'model': MultiBranchCNN,
+        #     'params': {
+        #         'config_tuple': config_tuple,
+        #         'name': 'multibranch_model',
+        #         'base_model': 'resnet18',
+        #         'num_branches': 3,
+        #         'num_attention_heads': 4,
+        #         'custom_head': [2048, 1024],
+        #         'prediction_head': [512, 256],
+        #         'dropout': 0.1
+        #     }
+        # }
     ]
 
     # Define training parameters for each model
     train_params_list = [
         {   
             'batch_size': 32,
-            'epochs': 30, 
+            'epochs': 5, 
             'learning_rate': 0.0001, 
             'val_split': 0.1,
             'test_split': 0.1,
@@ -93,10 +139,56 @@ def main():
             'epsilon':0.1,
             'init_weights': None,
         },
+        # {   
+        #     'batch_size': 32,
+        #     'epochs': 30, 
+        #     'learning_rate': 0.0001, 
+        #     'val_split': 0.1,
+        #     'test_split': 0.1,
+        #     'random_state': 5,
+        #     'epsilon':0.1,
+        #     'init_weights': None,
+        # },
+        # {   
+        #     'batch_size': 32,
+        #     'epochs': 30, 
+        #     'learning_rate': 0.0001, 
+        #     'val_split': 0.1,
+        #     'test_split': 0.1,
+        #     'random_state': 8,
+        #     'epsilon':0.1,
+        #     'init_weights': None,
+        # },
+        # {   
+        #     'batch_size': 32,
+        #     'epochs': 30, 
+        #     'learning_rate': 0.0001, 
+        #     'val_split': 0.1,
+        #     'test_split': 0.1,
+        #     'random_state': 73,
+        #     'epsilon':0.1,
+        #     'init_weights': None,
+        # },
+        # {   
+        #     'batch_size': 32,
+        #     'epochs': 30, 
+        #     'learning_rate': 0.0001, 
+        #     'val_split': 0.1,
+        #     'test_split': 0.1,
+        #     'random_state': 997,
+        #     'epsilon':0.1,
+        #     'init_weights': None,
+        # },
     ]  
 
-    train_params_list = train_params_list*len(model_configs)
+    # train_params_list = train_params_list*len(model_configs)
+    print(len(model_configs), len(train_params_list))
+    old_size_tp = len(train_params_list)
+    old_size_mc = len(model_configs)
+    train_params_list = [tp for tp in train_params_list for _ in range(old_size_mc)]
+    model_configs = model_configs*old_size_tp
     # train_params_list = train_params_list
+    print(len(model_configs), len(train_params_list))
     assert len(model_configs) == len(train_params_list), "Number of model configurations and training parameters must match."
     
     start_time = time.time()
@@ -104,7 +196,6 @@ def main():
     print("Loading and preparing datasets...")
     
     datasize_cut = 32000
-    maxwell_mode = True
     # for training with csd:
     X,y = mu.prepare_data(config_tuple, 
                           param_names=['csd', 'C_DD', 'C_DG'], 
