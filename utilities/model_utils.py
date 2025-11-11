@@ -1044,7 +1044,7 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
         test_split = result['train_params']['test_split']
         seed = result['train_params']['random_state']
         model_name = result['config']['params']['name']
-        mode = 'MW-' + str(result['param_names'][-2]) + '-' + str(result['param_names'][-1])
+        mode = 'GCM' if str(result['param_names'][-1]) == 'True' else 'LCM'
         base_model = result['config']['params'].get('base_model', 'N/A')
         init_weights = True if result['train_params']['init_weights'] is not None else False  
         epsilon = result['train_params']['epsilon']

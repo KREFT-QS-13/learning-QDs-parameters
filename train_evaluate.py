@@ -49,11 +49,11 @@ def main():
             'model': ResNet, 
             'params': {
                 'config_tuple': config_tuple,
-                'base_model': 'resnet10',
-                'name': f'Rn10-{N}-{S}-{system_name}',
+                'base_model': 'resnet18',
+                'name': f'Rn18-{N}-{S}',
                 'pretrained': False,
                 'dropout': 0.1,
-                'custom_head': [4096, 512],
+                'custom_head': [2048, 128],
              }
         },
         # {
@@ -116,7 +116,7 @@ def main():
         #     'model': MultiBranchCNN,
         #     'params': {
         #         'config_tuple': config_tuple,
-        #         'name': 'multibranch_model',
+        #         'name': 'Rn18-3-2',
         #         'base_model': 'resnet18',
         #         'num_branches': 3,
         #         'num_attention_heads': 4,
@@ -131,7 +131,7 @@ def main():
     train_params_list = [
         {   
             'batch_size': 32,
-            'epochs': 5, 
+            'epochs': 30, 
             'learning_rate': 0.0001, 
             'val_split': 0.1,
             'test_split': 0.1,
@@ -195,12 +195,12 @@ def main():
     # Load your data
     print("Loading and preparing datasets...")
     
-    datasize_cut = 32000
+    datasize_cut = 10000
     # for training with csd:
     X,y = mu.prepare_data(config_tuple, 
                           param_names=['csd', 'C_DD', 'C_DG'], 
                           all_batches=False,
-                          batches=np.arange(1,33), 
+                          batches=np.arange(1,11), 
                           datasize_cut=datasize_cut,
                           maxwell=maxwell_mode,
                           system_name=system_name)
