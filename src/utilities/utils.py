@@ -372,7 +372,7 @@ def generate_experiment_config(C_DD:np.ndarray, C_DG:np.ndarray, config_tuple:tu
 
     return capacitance_config, tunneling_config, sensor_config
 
-def generate_dataset(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.ndarray=None, 
+def generate_datapoint(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.ndarray=None, 
                      config_tuple:tuple[int,int,int]=None, sensors_radius:list[float]=None, 
                      sensors_angle:list[float]=None, const_sensor_r=False, cut:np.ndarray=None,
                      all_euclidean_cuts:bool=False):
@@ -851,7 +851,7 @@ def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, poly, csd,
     save_to_hfd5(datapoints_dict)
 
 
-def generate_datapoint(args):
+def generate_dataset(args):
     x_vol, y_vol, ks, device, i, N_batch, config_tuple, sensors_radius, sensors_angle, const_sensors_radius, all_euclidean_cuts, cut = args
     K, N, S = config_tuple
     print(f"Generating datapoint {i+1}/{N_batch}:")
@@ -867,7 +867,7 @@ def generate_datapoint(args):
         np.random.seed(unique_seed)
         random.seed(unique_seed)
         
-        result = generate_dataset(x_vol, y_vol, ks, device, config_tuple, sensors_radius, sensors_angle, const_sensors_radius, cut, all_euclidean_cuts)
+        result = generate_datapoint(x_vol, y_vol, ks, device, config_tuple, sensors_radius, sensors_angle, const_sensors_radius, cut, all_euclidean_cuts)
         if result is None:
             return None
             

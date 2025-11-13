@@ -80,7 +80,7 @@ def main():
         
         # Create a multiprocessing pool
         with mp.Pool(processes=mp.cpu_count()) as pool:
-            results = pool.map(u.generate_datapoint, pool_args)
+            results = pool.map(u.generate_dataset, pool_args)
         
         suc = 0
         for i, result in enumerate(results):
