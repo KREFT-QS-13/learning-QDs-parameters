@@ -17,12 +17,11 @@ import re
 import h5py
 import json
 
-sys.path.append('./qdarts')
 from qdarts.experiment import Experiment
 from qdarts.plotting import plot_polytopes
 
 import traceback
-import utilities.config as c
+import src.utilities.config as c
 
 DPI = c.DPI
 RESOLUTION = c.RESOLUTION
@@ -347,7 +346,7 @@ def get_mask(device: np.ndarray, config_tuple: tuple[int, int, int]) -> np.ndarr
 def generate_experiment_config(C_DD:np.ndarray, C_DG:np.ndarray, config_tuple:tuple[int, int, int], device:np.ndarray):
     K, N, S = config_tuple
     tunnel_couplings = np.zeros((K,K))
-    #TODO: Create a new mask that for each dot set c.tunnel_coupling_const to its nearest neighbors
+    
     mask = get_mask(device, config_tuple)
     tunnel_couplings[mask] = c.tunnel_coupling_const 
 
@@ -540,6 +539,9 @@ def clean_batch():
             print(f'{e}')
 
 def save_img_csd_from_figs(config_tuple, figs, cuts):
+    # TODO: FIX THIS ABOMINATION OF A FUNCTION! (12.11.2025)
+    # Add control for saving PNG images or not.
+    # Simplified it, think if you can just use figs straight away, then creating the saved_files or add filter on top of it.
     """
     Save matplotlib figures with unique names.
     
