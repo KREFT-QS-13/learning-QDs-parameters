@@ -17,6 +17,9 @@ import re
 import h5py
 import json
 
+# Add local qdarts to path (relative to learning_parameters directory)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'qdarts', 'src'))
+
 from qdarts.experiment import Experiment
 from qdarts.plotting import plot_polytopes
 
