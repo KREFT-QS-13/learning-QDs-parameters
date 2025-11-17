@@ -8,6 +8,12 @@ slurm_scripts/
 ALICE/
 ALICE-2/
 
-
+Results_Final/
+Interp_results/
 test/
 test
+
+__pycache__/
+
+configs/
+*.json
