@@ -19,14 +19,14 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
-import utilities.config as c
-import utilities.utils as u
+import src.utilities.config as c
+import src.utilities.utils as u
 sys.path.append('./qdarts')
 from qdarts.experiment import Experiment
 from qdarts.plotting import plot_polytopes
 
-from models.transfer_CNN import ResNet
-from models.vanilla_CNN import VanillaCNN
+from src.models.transfer_CNN import ResNet
+from src.models.vanilla_CNN import VanillaCNN
 
 
 # ----------------------------- LOAD DATA

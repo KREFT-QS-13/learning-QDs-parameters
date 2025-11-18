@@ -4,6 +4,7 @@ from scipy.special import comb
 import matplotlib as mpl
 mpl.use('Agg')  # Use the 'Agg' backend which is thread-safe
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 
 from PIL import Image
 import torchvision.transforms as transforms
@@ -541,83 +542,99 @@ def clean_batch():
             print("Unable to clean empty batch folder!")
             print(f'{e}')
 
-def save_img_csd_from_figs(config_tuple, figs, cuts):
-    # TODO: FIX THIS ABOMINATION OF A FUNCTION! (12.11.2025)
-    # Add control for saving PNG images or not.
-    # Simplified it, think if you can just use figs straight away, then creating the saved_files or add filter on top of it.
+def save_img_csd_from_figs(config_tuple, figs, cuts, save_images=True):
     """
-    Save matplotlib figures with unique names.
+    Convert matplotlib figures to tensors and optionally save images.
     
     Args:
         config_tuple (tuple): (K, N, S) configuration
-        figs (list): List of matplotlib figures for each cut and sensor
+        figs (list or matplotlib.figure.Figure): List of matplotlib figures for each cut and sensor, or single figure
         cuts (np.ndarray): Array of cuts used to generate the CSDs
+        save_images (bool): Whether to also save images to disk. If False, only converts to tensors.
     
     Returns:
-        tuple: (base_name, list of (path, name) for saved images)
-    """
+        tuple: (base_name, list of img_names, list of csd_tensors)
+    """    
     K, N, S = config_tuple
     
     # Generate base name
     base_name = ''.join([str(random.randint(0, 9)) for _ in range(10)])
     
-    # Create directory for this group
-    if isinstance(figs, list) or isinstance(figs, np.ndarray):
-        if len(figs) > 1:
-            group_dir = os.path.join(PATH_IMG, base_name)
-            ensure_path(group_dir)
-        else:
-            group_dir = PATH_IMG
-    else:
-        group_dir = PATH_IMG
+    # Normalize figs to a list
+    if not isinstance(figs, (list, np.ndarray)):
+        figs = [figs]
     
-    saved_files = []
+    # Normalize cuts to a list if needed
+    if not isinstance(cuts, (list, np.ndarray)):
+        cuts = [cuts]
+        
+    # Build list of (fig, cut_idx, sensor_idx) tuples for unified processing
+    fig_data = []
+    fig_idx = 0
     
-    if S > 0:  # Handle sensor data
-        fig_idx = 0
+    if S > 0:  # Sensor data: figs are organized as [cut0_s0, cut0_s1, ..., cut1_s0, ...]
         for cut_idx in range(len(cuts)):
-            # Add cut indices to name
-            indices = [np.argwhere(c == 1).squeeze().tolist() for c in cuts[cut_idx]]
-            cut_name = '_'+''.join(str(i) for i in indices)
-            
-            # Save figure for each sensor
             for sensor_idx in range(S):
-                img_name = f"{base_name}{cut_name}_s{sensor_idx}.png"
-                full_path_img = os.path.join(group_dir, img_name)
-                
-                # Save the figure
-                figs[fig_idx].savefig(full_path_img, format='png', 
-                                    bbox_inches='tight', pad_inches=0, dpi=c.DPI)
-                plt.close(figs[fig_idx])
-                
-                saved_files.append((full_path_img, img_name))
-                fig_idx += 1
-    elif isinstance(figs, list) or isinstance(figs, np.ndarray):
-        for cut_idx, fig in enumerate(figs):
-            # Add cut indices to name
+                if fig_idx < len(figs):
+                    fig_data.append((figs[fig_idx], cut_idx, sensor_idx))
+                    fig_idx += 1
+    else:  # Regular CSD: one fig per cut
+        for cut_idx in range(len(figs)):
+            fig_data.append((figs[cut_idx], cut_idx, None))
+    
+    # Single unified processing loop
+    img_names = []
+    csd_tensors = []
+    
+    for fig, cut_idx, sensor_idx in fig_data:
+        # Generate cut name
+        if cut_idx < len(cuts):
             indices = [np.argwhere(c == 1).squeeze().tolist() for c in cuts[cut_idx]]
-            cut_name = '_'+''.join(str(i) for i in indices)
-            
-            img_name = f"{base_name}{cut_name}.png"
+            cut_name = '_' + ''.join(str(i) for i in indices)
+        else:
+            cut_name = ''
+        
+        # Generate image name
+        if sensor_idx is not None:
+            img_name = f"{base_name}{cut_name}_s{sensor_idx}.png"
+        else:
+            img_name = f"{base_name}{cut_name}.png" if cut_name else f"{base_name}.png"
+        img_names.append(img_name)
+        
+        # Convert figure directly to numpy array using canvas buffer
+        canvas = FigureCanvasAgg(fig)
+        canvas.draw()
+        
+        # Get the RGBA buffer and convert to image array
+        buf = canvas.buffer_rgba()
+        image_array = np.asarray(buf)
+        
+        # Convert RGBA to RGB (drop alpha channel)
+        if len(image_array.shape) == 3 and image_array.shape[2] == 4:
+            image_array = image_array[:, :, :3]
+        
+        # Convert to tensor format [C, H, W]
+        if len(image_array.shape) == 2:
+            # Grayscale: add channel dimension
+            csd_tensor = torch.tensor(image_array[None, :, :], dtype=torch.uint8)
+        else:
+            # RGB: permute from [H, W, C] to [C, H, W]
+            csd_tensor = torch.tensor(image_array).permute(2, 0, 1)
+        
+        csd_tensors.append(csd_tensor)
+        
+        # Optionally save to disk if requested
+        if save_images:
+            group_dir = os.path.join(PATH_IMG, base_name) if len(figs) > 1 else PATH_IMG
             full_path_img = os.path.join(group_dir, img_name)
+            ensure_path(group_dir)
             
-            # Save the figure
             fig.savefig(full_path_img, format='png', 
                        bbox_inches='tight', pad_inches=0, dpi=c.DPI)
-            plt.close(fig)
-            
-            saved_files.append((full_path_img, img_name))
-    else:
-        fig = figs
-        full_path_img = os.path.join(group_dir, f"{base_name}.png")
-
-        fig.savefig(full_path_img, format='png', 
-                       bbox_inches='tight', pad_inches=0, dpi=c.DPI)
+        
         plt.close(fig)
-            
-        saved_files.append((full_path_img, f"{base_name}.png"))
     
-    return base_name, saved_files 
+    return base_name, img_names, csd_tensors
 
 def save_to_json(dictionary: dict):
     """
@@ -788,36 +805,20 @@ def reconstruct_img_with_matrices(batch_num: int, img_name: str, config_tuple: t
         
         return img, C_DD, C_DG
     
-def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, poly, csd, sensor_output, csd_plots, csd_gradient, device, sensors_coordinates):
+def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, poly, csd, sensor_output, csd_plots, csd_gradient, device, sensors_coordinates, save_png_images):
     """
     Combine all 'saving' functions to create a datapoint.
     """
     K, N, S = config_tuple
    
-    # save img of CSD 
-    # base_name, saved_files = save_img_csd(config_tuple, csd_plot, cuts)
-    base_name, saved_files = save_img_csd_from_figs(config_tuple, csd_plots, cuts)
-   
-    # Create tensors for each cut
-    csd_tensors = []
-    for (fpi, img_name) in saved_files:
-        # save datapoints
-        csd = Image.open(fpi)
-        csd_array = np.array(csd)
-
-        # Handle grayscale images (2D) vs RGB images (3D)
-        if len(csd_array.shape) == 2:
-            # If grayscale, add channel dimension
-            csd_tensor = torch.tensor(csd_array[None, :, :])
-        else:
-            # If RGB/RGBA, permute dimensions to [C, H, W]
-            csd_tensor = torch.tensor(csd_array).permute(2, 0, 1)
-        csd_tensors.append(csd_tensor)
+    # Convert figures directly to tensors (no save/load roundtrip)
+    base_name, img_names, csd_tensors = save_img_csd_from_figs(config_tuple, csd_plots, cuts, save_png_images)
+    
+    for img_name, csd in zip(img_names, csd_tensors):
+        if isinstance(csd_gradient, list):
+            csd_gradient = np.array(csd_gradient)
         
-    if isinstance(csd_gradient, list):
-        csd_gradient = np.array(csd_gradient)
-        
-    datapoints_dict = {img_name: {
+        datapoints_dict = {img_name: {
         # Metadata attributes
         'K': K, 
         'N': N,
@@ -845,13 +846,13 @@ def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, poly, csd,
         'y_vol': np.array(y_vol),
         'cuts': np.array(cuts),
         'sensor_output': sensor_output if sensor_output is not None else np.array([]),
-        'csd': csd_tensors,
+        'csd': csd,
         'csd_gradient': csd_gradient,
         'device': device,
         'sensors_coordinates': sensors_coordinates if sensors_coordinates is not None else np.array([])
-    }} # 24 elements 
+        }} # 24 elements 
     
-    save_to_hfd5(datapoints_dict)
+        save_to_hfd5(datapoints_dict)
 
 
 def generate_dataset(args):
@@ -1039,3 +1040,17 @@ def parse_array(string):
         return np.array(array_list)
     except (ValueError, SyntaxError) as e:
         raise argparse.ArgumentTypeError(f"Not a valid array: {string}") from e
+
+def get_group_names_from_hfd5(path: str) -> list[str]:
+    """
+    Get the group names from the HDF5 file.
+    """
+    with h5py.File(path, 'r') as f:
+        return list(f.keys())
+
+def get_random_group_name_from_hfd5(path: str) -> str:
+    """
+    Get a random group name from the HDF5 file.
+    """
+    with h5py.File(path, 'r') as f:
+        return random.choice(list(f.keys()))
