@@ -89,7 +89,7 @@ def main():
             
                 C_DD, C_DG, ks, cuts, x_vol, y_vol, csd, poly, sensor, figs, gradients, device, sensors_coordinates = result
                 u.save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, poly, csd,
-                                  sensor, figs, gradients, device, sensors_coordinates)
+                                  sensor, figs, gradients, device, sensors_coordinates, save_png_images)
                 print(f"Successfully generated datapoints: {suc}/{N_batch} ({i+1}/{N_batch}).\n\n")
 
         final_time = round(np.abs(main_start-time.time()),3)
