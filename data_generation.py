@@ -166,6 +166,7 @@ class QuantumDotModel:
             - 'alpha': (batch_size, Nd, Ng)
         """
         batch_size, Nd, _ = dot_distances_batch.shape
+        Ndots = Nd - 1
         Ng = self.Ngates
         d_nn_proxy = self.params.get("d_mean_nm", 100.0) * 1e-9
         
@@ -175,74 +176,104 @@ class QuantumDotModel:
         
         # --- 1. Model Gate Capacitance (C_tilde_DG) ---
         C_tilde_DG = np.zeros((batch_size, Nd, Ng))
-        k_g = self.params["C_dg_cross_mean"] * d_nn_proxy
         
         # Diagonal elements: Dot_i to its own Gate_i
-        diag_values = np.random.normal(
+        # For diagonal, d_nm = 0, so geometric factor = 50/sqrt(50^2 + 0^2) = 1
+        diag_base_values = np.random.normal(
             self.params["C_dg_diag_mean"],
             self.params["C_dg_diag_std"],
             size=(batch_size, Nd)
         )
-        diag_values = np.maximum(0.0, diag_values)
+        diag_base_values = np.maximum(0.0, diag_base_values)
         
-        # Set diagonal elements
+        # Set diagonal elements (geometric factor = 1 for d_nm = 0)
         for i in range(Nd):
-            C_tilde_DG[:, i, i] = diag_values[:, i]
+            C_tilde_DG[:, i, i] = diag_base_values[:, i]
         
         # Cross-talk elements: Dot_i to Gate_j (where i != j)
-        # Use broadcasting: (batch_size, Nd, Ng) where we need to avoid diagonal
-        # Create masks for off-diagonal elements
-        i_indices, j_indices = np.meshgrid(np.arange(Nd), np.arange(Ng), indexing='ij')
-        off_diag_mask = (i_indices != j_indices)
-        
-        # For off-diagonal: use distance from dot i to dot j (assuming gate j is near dot j)
-        # Extract distances: dot_distances_batch[:, i, j] gives distance from dot i to dot j
+        # Apply geometric model: C_dg(diag) * 50/(sqrt(50^2 + d_nm^2))
         for i in range(Nd):
             for j in range(Ng):
                 if i != j:
                     # Use distance from dot i to dot j as proxy for dot-gate distance
-                    dist_ij = dot_distances_batch[:, i, j]  # (batch_size,)
-                    mean = k_g / dist_ij  # (batch_size,)
-                    std_dev = self.params["C_dg_cross_std"] * (d_nn_proxy / dist_ij)  # (batch_size,)
+                    dist_ij_nm = dot_distances_batch[:, i, j] * 1e9  # Convert to nanometers
+                    # Geometric model: 50/(sqrt(50^2 + d_nm^2))
+                    geometric_factor = 50.0**2 / (50.0**2 + dist_ij_nm**2)
+                    # Scale the diagonal base value by geometric factor
+                    mean = diag_base_values[:, i] * geometric_factor
+                    std_dev = self.params["C_dg_diag_std"] * geometric_factor
                     C_tilde_DG[:, i, j] = np.maximum(0.0, np.random.normal(mean, std_dev))
         
         # --- 2. Enforce Sensor Constraints ---
-        if "C_dg_sensor_gate_fixed" in self.params:
-            C_tilde_DG[:, sensor_idx, sensor_gate_idx] = self.params["C_dg_sensor_gate_fixed"]
-
-            C_DG = C_tilde_DG.copy()
+        # Set qubit-sensor gate capacitances to zero
+        for i in range(sensor_idx):  # All qubit dots (indices < sensor_idx)
+            C_tilde_DG[:, i, sensor_gate_idx] = 0.0
         
+        # Set sensor dot to all gates (except its own) to zero
+        if "C_dg_sensor_gate_fixed" in self.params:
+            C_tilde_DG[:, sensor_idx, :] = 0.0
+            C_tilde_DG[:, sensor_idx, sensor_gate_idx] = self.params["C_dg_sensor_gate_fixed"]
+        
+        C_DG = C_tilde_DG.copy()
+        
+
+
         # --- 3. Model Dot-Dot Mutual Capacitance (C_m) ---
         C_m = np.zeros((batch_size, Nd, Nd))
-        C_m_nn_mean_proxy = self.params.get("C_m_nn_mean", self.params["C_dg_cross_mean"] * 3.0)
-        C_m_nn_std_proxy = self.params.get("C_m_nn_std", self.params["C_dg_cross_std"] * 3.0)
-        k_m = C_m_nn_mean_proxy * d_nn_proxy
+        # Use new parameter names: Cm_qq and Cm_sq
+        C_m_qq_mean = self.params.get("Cm_qq_mean", 8e-18)
+        C_m_qq_std = self.params.get("Cm_qq_std", 3e-18)
+        C_m_sq_mean = self.params.get("Cm_sq_mean", 1.5e-18)
+        C_m_sq_std = self.params.get("Cm_sq_std", 0.3e-18)
         
+        # Scale by distance: k = C_mean * d_mean, then C = k / d
+        k_m_qq = C_m_qq_mean * d_nn_proxy
+        k_m_sq = C_m_sq_mean * d_nn_proxy
+
         # Vectorized computation for all pairs (i, j) where i < j
         for i in range(Nd):
             for j in range(i + 1, Nd):
-                dist_ij = dot_distances_batch[:, i, j]  # (batch_size,)
-                mean = k_m / dist_ij  # (batch_size,)
-                std_dev = C_m_nn_std_proxy * (d_nn_proxy / dist_ij)  # (batch_size,)
+                dist_ij = dot_distances_batch[:, i, j]  # (batch_size,) in meters
+                
+                if i < sensor_idx and j < sensor_idx:
+                    # Quantum-quantum dot coupling
+                    mean = k_m_qq / dist_ij  # (batch_size,) in Farads
+                    std_dev = C_m_qq_std * (d_nn_proxy / dist_ij)  # (batch_size,) in Farads
+                else:
+                    # Sensor-quantum dot coupling (one of i or j is sensor)
+                    mean = k_m_sq / dist_ij  # (batch_size,) in Farads
+                    std_dev = C_m_sq_std * (d_nn_proxy / dist_ij)  # (batch_size,) in Farads
+                
                 values = np.maximum(0.0, np.random.normal(mean, std_dev))
                 C_m[:, i, j] = values
-                C_m[:, j, i] = values  # Symmetric
-        
+                C_m[:, j, i] = values
+
+
+
+
+
+
         # --- 4. Build the Full C_DD Matrix (Maxwell Matrix) ---
-        C_0_mean = self.params.get("C_0_mean", 20.0e-18)  # Default: 20 aF
-        C_0_std = self.params.get("C_0_std", 10.0e-18)     # Default: 10 aF
-
+        # Use new parameter names: C0_q for qubit dots, C0_s for sensor dot
+        C0_q_mean = self.params.get("C0_q_mean", 8e-18)
+        C0_q_std = self.params.get("C0_q_std", 2e-18)
+        C0_s_mean = self.params.get("C0_s_mean", 30e-18)
+        C0_s_std = self.params.get("C0_s_std", 1e-18)
+        
         # Generate substrate capacitance for each dot in each geometry
-        C_0 = np.random.normal(C_0_mean, C_0_std, size=(batch_size, Nd))
-        C_0 = np.maximum(0.0, C_0)  # Ensure non-negative
-
+        C_d0 = np.zeros((batch_size, Nd))
+        # Generate for qubit dots
+        for i in range(sensor_idx):
+            C_d0[:, i] = np.maximum(0.0, np.random.normal(C0_q_mean, C0_q_std, size=batch_size))
+        # Generate for sensor dot
+        C_d0[:, sensor_idx] = np.maximum(0.0, np.random.normal(C0_s_mean, C0_s_std, size=batch_size))
         # --- 4. Build the Full C_DD Matrix (Maxwell Matrix) ---
         C_DD = np.zeros((batch_size, Nd, Nd))
         C_cap_to_all_gates = np.sum(C_DG, axis=2)  # (batch_size, Nd)
 
         # Diagonal: sum of all gate capacitances + sum of mutual capacitances
         for i in range(Nd):
-            C_DD[:, i, i] = C_cap_to_all_gates[:, i] + np.sum(C_m[:, i, :], axis=1) + C_0[:, i]
+            C_DD[:, i, i] = C_cap_to_all_gates[:, i] + np.sum(C_m[:, i, :], axis=1) + C_d0[:, i]
         
         # Off-diagonal: negative mutual capacitances
         for i in range(Nd):
@@ -271,52 +302,33 @@ class QuantumDotModel:
         for i in range(Nd):
             C_tilde_DD[:, i, i] = np.sum(C_DD[:, i, :], axis=1)
         
-        # --- 7. Derive Tunnel Couplings (tc) with WKB exponential decay ---
+        # --- 7. Derive Tunnel Couplings (tc) with new formula ---
+        # New formula: tc = tc_max * exp(-att_per_nm * (d - d_min))
         tc_meV = np.zeros((batch_size, Nd, Nd))
-        tc_slope = self.params["tc_C_tilde_DD_slope"]
-        tc_std_frac = self.params["tc_std"]
+        tc_max = self.params.get("tc_max_meV", 1.0)
+        att_per_nm = self.params.get("att_per_nm", 0.05)
+        d_min_nm = self.params.get("tc_x0", self.params.get("d_min_nm", 50.0))
 
-        # WKB exponential decay parameters
-        # decay_length_nm: characteristic decay length in nanometers (typical: 10-50 nm)
-        # This controls how fast tunneling decays with distance
-        decay_length_nm = self.params.get("tc_decay_length_nm", 20.0)  # Default: 20 nm
-        decay_length_m = decay_length_nm * 1e-9  # Convert to meters
-
-        # Reference distance for normalization (typically the mean nearest-neighbor distance)
-        d_ref = self.params.get("d_mean_nm", 100.0) * 1e-9  # meters
-
-        for i in range(Nd):
-            for j in range(i + 1, Nd):
-                # Get distance between dots
-                dist_ij = dot_distances_batch[:, i, j]  # (batch_size,) in meters
+        for i in range(Ndots):
+            for j in range(i + 1, Ndots):
+                # Get distance between dots in nanometers
+                dist_ij_nm = dot_distances_batch[:, i, j] * 1e9  # (batch_size,) in nanometers
                 
-                # Base tunnel coupling based on mutual capacitance C_m
-                # (using C_m instead of C_tilde_DD as requested)
-                c_m_ij = C_m[:, i, j]  # (batch_size,)
-                base_tc = tc_slope * c_m_ij  # (batch_size,)
+                # New formula: tc = tc_max * exp(-att_per_nm * (d - d_min))
+                tc_values = tc_max * np.exp(-att_per_nm * (dist_ij_nm - d_min_nm))
                 
-                # Apply WKB exponential decay: exp(-(distance - d_ref) / decay_length)
-                # This gives exponential penalty for displacement beyond reference distance
-                # For distances < d_ref, we get enhancement (exp > 1)
-                # For distances > d_ref, we get suppression (exp < 1)
-                distance_penalty = np.exp(-(dist_ij - d_ref) / decay_length_m)  # (batch_size,)
-                
-                # Mean tunnel coupling with exponential decay
-                mean_tc = base_tc * distance_penalty  # (batch_size,)
-                std_tc = mean_tc * tc_std_frac  # (batch_size,)
-                
-                # Generate values (always non-negative)
-                tc_values = np.maximum(0.0, np.random.normal(mean_tc, std_tc))
-                tc_values = np.minimum(self.params["tc_max_meV"], tc_values)
+                # Ensure non-negative and within bounds
+                tc_values = np.maximum(0.0, tc_values)
+                tc_values = np.minimum(tc_max, tc_values)
                 
                 tc_meV[:, i, j] = tc_values
                 tc_meV[:, j, i] = tc_values  # Symmetric
-            
-            # --- 8. Derive Alpha (vectorized matrix multiplication) ---
-            # alpha = C_DD_inv @ C_DG for each batch element
-            alpha = np.zeros((batch_size, Nd, Ng))
-            for b in range(batch_size):
-                alpha[b] = C_DD_inv[b] @ C_DG[b]
+        
+        # --- 8. Derive Alpha (vectorized matrix multiplication) ---
+        # alpha = C_DD_inv @ C_DG for each batch element
+        alpha = np.zeros((batch_size, Nd, Ng))
+        for b in range(batch_size):
+            alpha[b] = C_DD_inv[b] @ C_DG[b]
         
         return {
             'C_tilde_DG': C_tilde_DG,
@@ -328,7 +340,8 @@ class QuantumDotModel:
             'Ec_meV': Ec_meV,
             'C_tilde_DD': C_tilde_DD,
             'tc_meV': tc_meV,
-            'alpha': alpha
+            'alpha': alpha,
+            'dot_distances_batch': dot_distances_batch
         }
 
 def get_virtual_gate_transitions( 
