@@ -330,3 +330,42 @@ class QuantumDotModel:
             'tc_meV': tc_meV,
             'alpha': alpha
         }
+
+def get_virtual_gate_transitions( 
+    alpha: np.ndarray,
+    Nd: int,
+    C_DD_inv: np.ndarray,
+    base_charge_state: np.ndarray | None = None,
+) -> np.ndarray:
+    """Return gate-voltage vectors that realise 0→1 transitions per dot."""
+    if base_charge_state is None:
+        base_charge_state = np.zeros( Nd, dtype=int)
+    else:
+        base_charge_state = np.asarray(base_charge_state)
+        if len(base_charge_state) != Nd:
+            raise ValueError("base_charge_state must match the number of dots.")
+
+    try:
+        alpha_inv = inv(alpha)
+    except np.linalg.LinAlgError as exc:
+        raise ValueError("Alpha matrix is singular; transitions are undefined.") from exc
+
+    transition_voltages = np.zeros((Nd, Nd))
+    for i in range(Nd):
+        v_i_full = alpha_inv[:, i]
+        term1_V = -e * (C_DD_inv[i, :] @ base_charge_state)
+        term2_V = -(e / 2.0) * C_DD_inv[i, i]
+        V_i_scalar = term1_V + term2_V
+        transition_voltages[i] = v_i_full * V_i_scalar
+
+    return transition_voltages
+
+def get_coulomb_diamond_sizes(C_DD_inv: np.ndarray, alpha: np.ndarray):
+        C_DD_inv_diag = np.diag(C_DD_inv)
+        # We use .copy() to create a writable array, not a read-only view
+        alpha_diag = np.diag(alpha).copy()
+        # Avoid division by zero if alpha is zero
+        alpha_diag[np.abs(alpha_diag) < 1e-15] = 1e-15
+        charging_energy_V = e * C_DD_inv_diag
+        delta_V_o = charging_energy_V / alpha_diag
+        return delta_V_o
