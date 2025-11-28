@@ -538,7 +538,7 @@ class Experiment:  # TODO: change name to the simulator name
             # to understand what's going on ... Arguments like plane_axes share the
             # same name but end up having a completely different shape depending on the flags
             sensor_values = simulator.sensor_scan_2D(
-                plane_axes,
+                np.array(plane_axes).T,
                 v_offset,
                 minV,
                 maxV,
