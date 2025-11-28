@@ -198,7 +198,7 @@ class QuantumDotModel:
                     # Use distance from dot i to dot j as proxy for dot-gate distance
                     dist_ij_nm = dot_distances_batch[:, i, j] * 1e9  # Convert to nanometers
                     # Geometric model: 50/(sqrt(50^2 + d_nm^2))
-                    geometric_factor = 50.0**2 / (50.0**2 + dist_ij_nm**2)
+                    geometric_factor = (30.0**2 / (30.0**2 + dist_ij_nm**2))**1.5
                     # Scale the diagonal base value by geometric factor
                     mean = diag_base_values[:, i] * geometric_factor
                     std_dev = self.params["C_dg_diag_std"] * geometric_factor
@@ -307,7 +307,7 @@ class QuantumDotModel:
         tc_meV = np.zeros((batch_size, Nd, Nd))
         tc_max = self.params.get("tc_max_meV", 1.0)
         att_per_nm = self.params.get("att_per_nm", 0.05)
-        d_min_nm = self.params.get("tc_x0", self.params.get("d_min_nm", 50.0))
+        d_dot_nm = self.params.get("d_dot_nm", self.params.get("d_min_nm", 50.0)/2)
 
         for i in range(Ndots):
             for j in range(i + 1, Ndots):
@@ -315,7 +315,7 @@ class QuantumDotModel:
                 dist_ij_nm = dot_distances_batch[:, i, j] * 1e9  # (batch_size,) in nanometers
                 
                 # New formula: tc = tc_max * exp(-att_per_nm * (d - d_min))
-                tc_values = tc_max * np.exp(-att_per_nm * (dist_ij_nm - d_min_nm))
+                tc_values = tc_max * np.exp(-att_per_nm * (dist_ij_nm - 2*d_dot_nm))  
                 
                 # Ensure non-negative and within bounds
                 tc_values = np.maximum(0.0, tc_values)
@@ -323,6 +323,13 @@ class QuantumDotModel:
                 
                 tc_meV[:, i, j] = tc_values
                 tc_meV[:, j, i] = tc_values  # Symmetric
+        
+        for b in range(batch_size):
+            if np.any(tc_meV[b, :, :] > 0.4):
+                for i in range(Ndots):
+                    for j in range(i + 1, Ndots):
+                        if tc_meV[b, i, j] > 0.4:
+                            print(f"i={i}, j={j}, dist_ij_nm={dot_distances_batch[b, i, j] * 1e9}, tc_value={tc_meV[b, i, j]}")
         
         # --- 8. Derive Alpha (vectorized matrix multiplication) ---
         # alpha = C_DD_inv @ C_DG for each batch element
@@ -373,12 +380,14 @@ def get_virtual_gate_transitions(
 
     return transition_voltages
 
-def get_coulomb_diamond_sizes(C_DD_inv: np.ndarray, alpha: np.ndarray):
-        C_DD_inv_diag = np.diag(C_DD_inv)
-        # We use .copy() to create a writable array, not a read-only view
-        alpha_diag = np.diag(alpha).copy()
-        # Avoid division by zero if alpha is zero
-        alpha_diag[np.abs(alpha_diag) < 1e-15] = 1e-15
-        charging_energy_V = e * C_DD_inv_diag
-        delta_V_o = charging_energy_V / alpha_diag
-        return delta_V_o
+def get_coulomb_diamond_sizes(C_DG: np.ndarray):
+    """
+    Calculate coulomb diamond sizes for each gate.
+    
+    For each gate j, the diamond size is calculated using the lever arm
+    of the primary dot (dot j) to that gate.
+    """
+    
+
+    
+    return e/np.diag(C_DG)
