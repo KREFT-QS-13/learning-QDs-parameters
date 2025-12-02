@@ -1,1056 +1,649 @@
+import json
+import os, glob
 import numpy as np
-import random
-from scipy.special import comb
-import matplotlib as mpl
-mpl.use('Agg')  # Use the 'Agg' backend which is thread-safe
+from itertools import combinations
+from pathlib import Path
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+from gen_data_utils import QuantumDotModel, get_virtual_gate_transitions, get_coulomb_diamond_sizes
+from qdarts.experiment import Experiment
+from qdarts.plotting import plot_polytopes
 
 from PIL import Image
 import torchvision.transforms as transforms
 import torch
 
-import os, time
-import sys
-import ast, argparse
-import shutil
-import re
-import h5py
-import json
+# Physical constants
+e = 1.602176634e-19  # Coulomb (elementary charge)
+meV = 1.602176634e-22  # Joule (milli-electron-volt = e * 1e-3)
 
-# Add local qdarts to path (relative to learning_parameters directory)
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'qdarts', 'src'))
+# Energy conversion factor
+E_CONV_FACTOR = (e**2) / (2.0 * meV)  # C^2 / (J/meV)
 
-from qdarts.experiment import Experiment
-from qdarts.plotting import plot_polytopes
-
-import traceback
-import src.utilities.config as c
-
-DPI = c.DPI
-RESOLUTION = c.RESOLUTION
-
-def transform_to_cartesian(r:float, theta:float) -> tuple[float, float]:
+class QuantumDotModel:
     """
-        Transform polar coordinates to Cartesian coordinates.
-    """
-    return r*np.cos(theta), r*np.sin(theta)
+        Initializes the random quantum dot model.
 
-def dist_between_points(i:tuple[int, int], j:tuple[int, int]) -> float:
-    """
-        Get the distance between two points.
-    """
-    return round(c.d_DD*np.sqrt((i[0]-j[0])**2 + (i[1]-j[1])**2), 4)
+        Parameters
+        ----------
+        Nd : int
+            The total number of quantum dots in the system (e.g., 4 for a
+            3-dot system + 1 sensor).
+        Ng : int
+            The total number of gates in the system. This is typically
+            equal to Nd, as each dot has at least one plunger gate.
+        params : dict[str, float]
+            A dictionary of hyperparameters used to control the statistical
+            generation of the device geometry and capacitances.
+        """
 
-def get_dots_indices(device:np.ndarray) -> list[tuple[int, int]]:
-    """
-        Get the indices of the dots in the device.
-    """
-    device = np.asarray(device)
+    def __init__(self, Ndots: int, Ngates: int, params: dict[str, float]):
+        self.Ndots = Ndots
+        self.Ngates = Ngates
+        self.params = params
 
-    if device is None:
-        return 0
-    if device.ndim != 2:
-        raise ValueError(f"Device array must be 2D, got shape {device.shape}, type {type(device)},\n{device}")
-    
-    indices = np.where(device == 1)
-    return list(zip(indices[0], indices[1]))
-
-def get_dots_coordinates(device:np.ndarray) -> list[tuple[int, int]]:
-    """
-        Get the coordinates of the dots in the device.
-    """
-    device = np.asarray(device)
-    
-    if device.ndim != 2:
-        raise ValueError(f"Device array must be 2D, got shape {device.shape}")
-    
-    indices = np.where(device == 1)    
-    return list(zip(indices[1], -indices[0]))  # Note: x = col, y = -row
-
-def set_dots_number_based_on_device(device:np.ndarray, S:int) -> int:
-    """
-        Set the number of dots based on the device size and the number of sensors S.
-    """
-    c.set_global_K(len(get_dots_indices(device)) + S)
-
-def get_centroid_of_device(device:np.ndarray) -> tuple[float, float]:
-    """
-        Get the centroid of the device as a point in the Cartesian coordinate system.
-
-    """ 
-    x_c = np.mean(get_dots_indices(device), axis=0)[1]
-    y_c = -np.mean(get_dots_indices(device), axis=0)[0]
-    return (x_c, y_c), np.sqrt(x_c**2 + y_c**2)
-
-def check_sensor_in_correct_region(r0:float, theta0:float, device:np.ndarray, r_min:float=c.r_min, r_max:float=c.r_max) -> bool:
-    centroid, _ = get_centroid_of_device(device)
-    x_c, y_c = centroid
-    s_x, s_y = transform_to_cartesian(r0, theta0)
-
-    return r_min < np.sqrt((s_x-x_c)**2 + (s_y-y_c)**2) <= r_max
-
-def draw_random(S:int, device:np.ndarray, const_sensor_r:bool) -> list[float]:
-    """
-        Draw random r0 for S sensors.
-    """
-    nx, ny = device.shape
-    r_min = c.r_min  # or 0.5*np.sqrt(nx**2 + ny**2)*c.d_DD * 1.5
-    r_max = c.r_max
-
-    list_r0 = []
-    list_theta0 = []
-    while len(list_r0) < S:
-        r0 = np.random.uniform(0, r_max)
-        theta0 = np.random.uniform(0, 2*np.pi) 
-        if check_sensor_in_correct_region(r0, theta0, device, r_min=r_min):
-            list_r0.append(r0)
-            list_theta0.append(theta0)
-
-
-    if const_sensor_r:
-       list_r0 = [list_r0[0]]*S
-
-    return list_r0, list_theta0
-
-def set_sensors_positions(S:int, device:np.ndarray, const_sensor_r=False, list_r0:list[float]=None, list_theta0:list[float]=None) -> tuple[float, float]:
-    """
-        Return the positions of the sensors in polar coordinates.
-    """
-    if list_r0 is None and list_theta0 is None:
-        list_r0, list_theta0 = draw_random(S, device, const_sensor_r)
-    elif list_r0 is None and list_theta0 is not None:
-        list_r0, _ = draw_random(S, device, const_sensor_r)
-    elif list_r0 is not None and list_theta0 is None:
-        _, list_theta0 = draw_random(S, device, const_sensor_r)
-
-    return [(r0,t0)  for r0, t0 in zip(list_r0, list_theta0)]
-
-def get_dist_dot_sensor(r0:float, theta0:float, nx:int, ny:int) -> tuple[float, float]:
-    """
-        Return the distance between a dot and a sensor
-    """
-    theta_0i = np.arctan(ny/nx) if nx != 0 else np.pi/2
-    r_0i = c.d_DD*np.sqrt(nx**2 + ny**2)
-    theta_si = theta_0i + theta0
-    
-    return np.sqrt( r0**2 + r_0i**2 - 2*r0*r_0i*np.cos(theta_si))
-
-def get_device_distance_matrix(config_tuple:tuple[int, int, int], device:np.ndarray, sensors:list[tuple[float, float]]) -> np.ndarray:
-    """
-        Get the distance matrix for the device.
-    """
-    K, N, S = config_tuple
-    dist_matrix = np.zeros((K,K))
-    sensor_corr = [transform_to_cartesian(r,t) for r,t in sensors]
-    sensor_corr = [(x/c.d_DD, y/c.d_DD)  for x,y in sensor_corr]
-    
-    system_corr = get_dots_coordinates(device) + sensor_corr
-
-    for i in range(len(system_corr)):
-        for j in range(i, len(system_corr)):
-            dist_matrix[i,j] = dist_between_points(system_corr[i], system_corr[j])
-            dist_matrix[j,i] = dist_matrix[i,j]
-    
-    dist_matrix_dd = dist_matrix
-    dist_matrix_dg = np.sqrt(dist_matrix_dd**2 + c.d_DG**2)
-
-    return dist_matrix_dd, dist_matrix_dg
-
-def generate_capacitance_matrices(config_tuple:tuple[int, int, int]=None, device:np.ndarray=None, sensors_radius:list[float]=None, 
-                                  sensors_angle:list[float]=None,  const_sensor_r:bool=False, sensor_total_capacitance_coeff:float=100.0) -> tuple[np.ndarray, np.ndarray]:
-    """
-        Generate random capacitance matrices for a given number of dots K from a normal distribution.
+    def _generate_dot_distances_2d_batch(
+        self, 
+        Nconfigurations: int = 10000,
+        batch_size: int = 12000, 
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Generates 2D coordinates for Nd dots in batches, ensuring minimum separation.
         
-        The diagonal elements of C_DD are drawn from a normal distribution 
-        with a mean of 2*mean and a standard deviation of 10% of the mean.
-
-        The off-diagonal elements of C_DD and C_DG are drawn from a normal distribution 
-        with a mean and standard deviation of 10% of mean.
-    """
-    dist_decay = lambda d,p: np.exp(-d/p)
-    K, N, S = config_tuple
-
-    # Initialize dot-dot capacitance matrix
-    C_DD = np.zeros((K,K))
-    C_DD[np.triu_indices(K, k=1)] = np.random.normal(c.dd_avg, c.dd_std, K*(K-1)//2)
-    
-    # Initialize dot-gate capacitance matrix
-    C_DG = np.diag(np.random.normal(c.dg_avg, c.dg_std, K))
-
-    # Distance decay transformations
-    sensors_corr = set_sensors_positions(S, device, const_sensor_r, sensors_radius, sensors_angle)
-    dist_matrix_dd, dist_matrix_dg = get_device_distance_matrix(config_tuple, device, sensors_corr)
-    
-    C_DD[np.triu_indices(len(C_DD), k=1)] *= dist_decay(dist_matrix_dd[np.triu_indices(len(C_DD), k=1)]/c.d_DD, c.lambda_coeff_dd)
-    
-    for i in range(K):
-        for j in range(i+1, K):
-            C_DG[i,j] = C_DG[j,i] = C_DG[i,i]*dist_decay(dist_matrix_dg[i,j]/c.d_DG, c.lambda_coeff_dg)
-
-    # Final touches: Symmetry, noise
-    C_DD = C_DD + C_DD.T
-    C_DG[np.where(~np.eye(K, dtype=bool))] += np.random.normal(0, 0.1, K*(K-1))
-
-    # No cross-talk between the sensor dot and the target dot.
-    if S > 0:
-        for i in range(K):
-            for j in range(i+1, K):
-                if not (i < N and j < N):
-                    C_DG[i,j] = C_DG[j,i] = 0
-    
-        # sensor total capacitance
-        indices = -np.arange(1,S+1)
-        C_DD[indices, indices] = [sensor_total_capacitance_coeff]*S
-
-    C_DG = np.round(C_DG, 6)
-    C_DD = np.round(C_DD, 6)
-
-    if (C_DG < 0).any():
-        C_DG = np.abs(C_DG)
-    
-    if (C_DD < 0).any():
-        C_DD = np.abs(C_DD)
-    
-    return C_DD, C_DG, sensors_corr
-
-def generate_dummy_data(K:int) -> tuple[np.ndarray, np.ndarray]:
-    """
-        Generate dummy (identity matrix) capacitance matrices for a given number of dots K.
-    """
-    return np.identity(K), np.identity(K)
-
-def get_cut(config_tuple):
-    """Generate a 2d cut constructed from standard basis vectors."""
-    K, N, S = config_tuple
-        
-    cut = np.zeros((2, K), dtype=int)
-    indices = np.random.choice(np.arange(N), 2, replace=False)
-    cut[tuple(zip(*enumerate(indices)))] = 1
-    return cut[np.argmax(cut, axis=1).argsort()]
-
-def get_all_euclidean_cuts(config_tuple):
-    K, N, _ = config_tuple  
-    num_of_cuts = int(comb(N,2))
-    cuts = np.zeros((num_of_cuts, 2, K), dtype=int)
-
-    k=0
-    for i in range(N):
-        for j in range(i+1,N):
-            cuts[k][0][i] = 1
-            cuts[k][1][j] = 1
-            k+=1
-
-    return cuts 
-
-def plot_csd_from_sensor(sensor_output, cut=None, sensor_channel=0):
-    plt.figure(figsize=(RESOLUTION/DPI, RESOLUTION/DPI), dpi=DPI)
-    ax = plt.gca()
-    plt.tight_layout(pad=0)
-    plt.axis('off')
-
-    if cut is not None:
-        ax.pcolormesh(sensor_output[cut,:,:,sensor_channel].squeeze())
-    else:
-        ax.pcolormesh(sensor_output[:,:,sensor_channel].squeeze())
-
-    return plt.gcf(), ax
-
-def plot_CSD(x: np.ndarray, y: np.ndarray, csd_or_sensor: np.ndarray, polytopesks: list[np.ndarray], 
-             only_edges:bool=False, only_labels:bool=True, res:int=RESOLUTION, dpi:int=DPI):
-    """
-    Plot the charge stability diagram (CSD).
-    
-    Args:
-        x (np.ndarray): x-axis values
-        y (np.ndarray): y-axis values
-        csd_or_sensor (np.ndarray): 2D or 3D array of CSD/sensor data
-        polytopesks (list[np.ndarray]): List of polytopes
-        only_edges (bool): Whether to plot only edges of polytopes
-        only_labels (bool): Whether to plot only labels
-        res (int): Resolution of the plot
-        dpi (int): DPI of the plot
-    
-    Returns:
-        tuple: (figure, axis) if 2D input
-               list of (figure, axis) if 3D input
-    """
-
-    # Handle 3D array (multiple channels)
-    if len(csd_or_sensor.shape) == 4:
-        figures_and_axes = []
-        for cut in range(csd_or_sensor.shape[0]):
-            for channel in range(csd_or_sensor.shape[-1]):
-                plt.figure(figsize=(res/dpi, res/dpi), dpi=dpi)
-                ax = plt.gca()
+        Parameters
+        ----------
+        Nconfigurations : int
+            Total number of valid geometries to generate
+        batch_size : int
+            Number of geometries to generate per batch (should be >= Nconfigurations
+            to account for some invalid geometries)
             
-                ax.pcolormesh(1e3*x, 1e3*y, csd_or_sensor[cut,:,:,channel].squeeze())
-                    
-                # print(polytopesks, len(polytopesks))
-                plot_polytopes(ax, polytopesks[cut], axes_rescale=1e3, 
-                                only_edges=only_edges, only_labels=only_labels, skip_dots=[2])
-                    
-                ax.set_xlim(x[0]*1e3, x[-1]*1e3)
-                ax.set_ylim(y[0]*1e3, y[-1]*1e3)
-                ax.axis('off')
-                plt.tight_layout(pad=0)
-                    
-                figures_and_axes.append((plt.gcf(), ax))
+        Returns
+        -------
+        tuple[np.ndarray, np.ndarray]
+            A tuple containing:
+            1. dot_distances: The (Nconfigurations, Nd, Nd) Euclidean distance matrices
+            2. coords: The (Nconfigurations, Nd, 2) array of (x, y) coordinates
+        """
+        Nd = self.Ndots
+        d_mean = self.params.get("d_mean_nm", 100.0) * 1e-9
+        d_std = self.params.get("d_std_nm", 20.0) * 1e-9
+        d_min = self.params.get("d_min_nm", 60.0) * 1e-9
+        
+        # Pre-allocate output arrays
+        all_coords = np.zeros((Nconfigurations, Nd, 2))
+        all_distances = np.zeros((Nconfigurations, Nd, Nd))
+        n_collected = 0
+        
+        # Keep generating batches until we have enough valid geometries
+        while n_collected < Nconfigurations:
+            # Generate a batch
+            coords = np.zeros((batch_size, Nd, 2))
+            
+            # Pre-generate all random samples for this batch
+            anchors = []
+            distances = np.zeros((batch_size, Nd - 1))
+            angles = np.zeros((batch_size, Nd - 1))
+            
+            for i in range(1, Nd):
+                anchor_choices = np.random.randint(0, i, size=batch_size)
+                anchors.append(anchor_choices)
                 
-        return figures_and_axes
-    else:
-        # Original behavior for 2D array
-        plt.figure(figsize=(res/dpi, res/dpi), dpi=dpi)
-        ax = plt.gca()
-
-        ax.pcolormesh(1e3*x, 1e3*y, csd_or_sensor.squeeze())
-        plot_polytopes(ax, polytopesks[0], axes_rescale=1e3, 
-                      only_edges=only_edges, only_labels=only_labels)
-
-        ax.set_xlim(x[0]*1e3, x[-1]*1e3)
-        ax.set_ylim(y[0]*1e3, y[-1]*1e3)
-        ax.axis('off')
-        plt.tight_layout(pad=0)
-
-        return plt.gcf(), ax
-
-def get_mask(device: np.ndarray, config_tuple: tuple[int, int, int]) -> np.ndarray:
-    """
-    Create a mask for nearest neighbors (horizontal and vertical only) in the device.
-    
-    Args:
-        device (np.ndarray): Binary array where 1s represent dots
-        config_tuple (tuple[int, int, int]): Tuple of (K, N, S) values
-    
-    Returns:
-        np.ndarray: Boolean array of shape (K, K) where True indicates nearest neighbors
-    """
-    K, N, S = config_tuple
-    mask = np.zeros((K, K), dtype=bool)
-    
-    # Get dot indices
-    dot_indices = get_dots_indices(device)
-    
-    # Check each pair of dots
-    for i, (row1, col1) in enumerate(dot_indices):
-        for j, (row2, col2) in enumerate(dot_indices):
-            if i != j:  # Don't compare dot with itself
-                # Check if dots are adjacent horizontally or vertically
-                is_neighbor = (
-                    (abs(row1 - row2) == 1 and col1 == col2) or  # Vertical neighbor
-                    (abs(col1 - col2) == 1 and row1 == row2)     # Horizontal neighbor
+                distances[:, i-1] = np.maximum(
+                    d_min, 
+                    np.random.normal(d_mean, d_std, size=batch_size)
                 )
-                if is_neighbor:
-                    mask[i, j] = True
-                    mask[j, i] = True  # Make it symmetric
-    
-    return mask
-
-
-def generate_experiment_config(C_DD:np.ndarray, C_DG:np.ndarray, config_tuple:tuple[int, int, int], device:np.ndarray):
-    K, N, S = config_tuple
-    tunnel_couplings = np.zeros((K,K))
-    
-    mask = get_mask(device, config_tuple)
-    tunnel_couplings[mask] = c.tunnel_coupling_const 
-
-    capacitance_config = {
-        "C_DD" : C_DD,  #dot-dot capacitance matrix
-        "C_Dg" : C_DG,  #dot-gate capacitance matrix
-        "ks" : None,       #distortion of Coulomb peaks. NOTE: If None -> constant size of Coublomb peak 
-    }
-
-    tunneling_config = {
-        "tunnel_couplings": tunnel_couplings, #tunnel coupling matrix
-        "temperature": 0.1,                   #temperature in Kelvin
-        "energy_range_factor": 5,  #energy scale for the Hamiltonian generation. NOTE: Smaller -> faster but less accurate computation 
-    }
-
-    sensor_config = {
-        "sensor_dot_indices": np.arange(N,K).tolist(), #TODO: Fix it -np.arange(1,S+1),  #Indices of the sensor dots
-        "sensor_detunings": [0.0005]*S,  #Detuning of the sensor dots , -0.02
-        "noise_amplitude": {"fast_noise":c.fast_noise_amplitude, "slow_noise": c.slow_noise_amplitude}, #Noise amplitude for the sensor dots in eV
-        "peak_width_multiplier": 30, #40 , 25  #Width of the sensor peaks in the units of thermal broadening m *kB*T/0.61.
-    }
-
-
-    return capacitance_config, tunneling_config, sensor_config
-
-def generate_datapoint(x_vol: np.ndarray, y_vol: np.ndarray, ks:int=0, device:np.ndarray=None, 
-                     config_tuple:tuple[int,int,int]=None, sensors_radius:list[float]=None, 
-                     sensors_angle:list[float]=None, const_sensor_r=False, cut:np.ndarray=None,
-                     all_euclidean_cuts:bool=False):
-    """
-        Run the QDarts experiment.
-    """
-
-    print(f"Generating dataset for {config_tuple} configuration")
-    if config_tuple is None:
-        raise ValueError("config_tuple must be provided")
+                angles[:, i-1] = np.random.uniform(0, 2 * np.pi, size=batch_size)
+            
+            # Build coordinates sequentially but vectorized across batch
+            for i in range(1, Nd):
+                anchor_idx = anchors[i-1]
+                d = distances[:, i-1]
+                theta = angles[:, i-1]
+                
+                anchor_coords = coords[np.arange(batch_size), anchor_idx]
+                offsets = np.column_stack([
+                    d * np.cos(theta),
+                    d * np.sin(theta)
+                ])
+                coords[:, i] = anchor_coords + offsets
+            
+            # Vectorized distance checking
+            coords_expanded_i = coords[:, :, np.newaxis, :]  # (batch_size, Nd, 1, 2)
+            coords_expanded_j = coords[:, np.newaxis, :, :]  # (batch_size, 1, Nd, 2)
+            
+            diff = coords_expanded_i - coords_expanded_j  # (batch_size, Nd, Nd, 2)
+            pairwise_distances = np.linalg.norm(diff, axis=-1)  # (batch_size, Nd, Nd)
+            
+            # Check validity
+            identity_mask = np.eye(Nd, dtype=bool)
+            valid_pairs = pairwise_distances >= d_min
+            valid_pairs[:, identity_mask] = True  # Ignore diagonal
+            
+            geometry_valid = np.all(valid_pairs, axis=(1, 2))  # (batch_size,)
+            
+            # Keep only valid geometries and fill pre-allocated arrays
+            valid_coords = coords[geometry_valid]
+            valid_distances = pairwise_distances[geometry_valid]
+            n_valid = np.sum(geometry_valid)
+            
+            if n_valid > 0:
+                n_needed = Nconfigurations - n_collected
+                n_to_take = min(n_needed, n_valid)
+                
+                # Fill pre-allocated arrays directly (no appending/concatenation)
+                all_coords[n_collected:n_collected + n_to_take] = valid_coords[:n_to_take]
+                all_distances[n_collected:n_collected + n_to_take] = valid_distances[:n_to_take]
+                n_collected += n_to_take
         
-    K, N, S = config_tuple
-    c.validate_state(K, N, S)
-    
-    if S > 0 and device is None:
-        raise ValueError("Device must be provided when using sensors (S > 0)")
+        return all_distances, all_coords
+
+
+    def _generate_from_physics_batch(
+        self, 
+        dot_distances_batch: np.ndarray
+    ) -> dict[str, np.ndarray]:
+        """
+        Vectorized version: Samples random device parameters for a batch of geometries.
         
-    try:
-        C_DD, C_DG, sensors_coordinates = generate_capacitance_matrices(config_tuple, device, sensors_radius, sensors_angle, const_sensor_r)
+        Parameters
+        ----------
+        dot_distances_batch : np.ndarray
+            Shape (batch_size, Nd, Nd) - batch of distance matrices
+            
+        Returns
+        -------
+        dict[str, np.ndarray]
+            Dictionary containing all capacitance matrices and derived quantities:
+            - 'C_tilde_DG': (batch_size, Nd, Ng)
+            - 'C_DG': (batch_size, Nd, Ng)
+            - 'C_m': (batch_size, Nd, Nd)
+            - 'C_DD': (batch_size, Nd, Nd)
+            - 'C_DD_inv': (batch_size, Nd, Nd)
+            - 'E_matrix_meV': (batch_size, Nd, Nd)
+            - 'Ec_meV': (batch_size, Nd)
+            - 'C_tilde_DD': (batch_size, Nd, Nd)
+            - 'tc_meV': (batch_size, Nd, Nd)
+            - 'alpha': (batch_size, Nd, Ng)
+        """
+        batch_size, Nd, _ = dot_distances_batch.shape
+        Ndots = Nd - 1
+        Ng = self.Ngates
+        d_nn_proxy = self.params.get("d_mean_nm", 100.0) * 1e-9
         
-        if cut is None:
-            try:
-                if all_euclidean_cuts:
-                    cuts = get_all_euclidean_cuts(config_tuple)
+        # Get sensor indices from params
+        sensor_idx = self.params.get("sensor_idx", Nd - 1)
+        sensor_gate_idx = self.params.get("sensor_gate_idx", Nd - 1)
+        
+        # --- 1. Model Gate Capacitance (C_tilde_DG) ---
+        C_tilde_DG = np.zeros((batch_size, Nd, Ng))
+        
+        # Diagonal elements: Dot_i to its own Gate_i
+        # For diagonal, d_nm = 0, so geometric factor = 50/sqrt(50^2 + 0^2) = 1
+        diag_base_values = np.random.normal(
+            self.params["C_dg_diag_mean"],
+            self.params["C_dg_diag_std"],
+            size=(batch_size, Nd)
+        )
+        diag_base_values = np.maximum(0.0, diag_base_values)
+        
+        # Set diagonal elements (geometric factor = 1 for d_nm = 0)
+        for i in range(Nd):
+            C_tilde_DG[:, i, i] = diag_base_values[:, i]
+        
+        # Cross-talk elements: Dot_i to Gate_j (where i != j)
+        # Apply geometric model: C_dg(diag) * 50/(sqrt(50^2 + d_nm^2))
+        for i in range(Nd):
+            for j in range(Ng):
+                if i != j:
+                    # Use distance from dot i to dot j as proxy for dot-gate distance
+                    dist_ij_nm = dot_distances_batch[:, i, j] * 1e9  # Convert to nanometers
+                    # Geometric model: 50/(sqrt(50^2 + d_nm^2))
+                    geometric_factor = (30.0**2 / (30.0**2 + dist_ij_nm**2))**1.5
+                    # Scale the diagonal base value by geometric factor
+                    mean = diag_base_values[:, i] * geometric_factor
+                    std_dev = self.params["C_dg_diag_std"] * geometric_factor
+                    C_tilde_DG[:, i, j] = np.maximum(0.0, np.random.normal(mean, std_dev))
+        
+        # --- 2. Enforce Sensor Constraints ---
+        # Set qubit-sensor gate capacitances to zero
+        for i in range(sensor_idx):  # All qubit dots (indices < sensor_idx)
+            C_tilde_DG[:, i, sensor_gate_idx] = 0.0
+        
+        # Set sensor dot to all gates (except its own) to zero
+        if "C_dg_sensor_gate_fixed" in self.params:
+            C_tilde_DG[:, sensor_idx, :] = 0.0
+            C_tilde_DG[:, sensor_idx, sensor_gate_idx] = self.params["C_dg_sensor_gate_fixed"]
+        
+        C_DG = C_tilde_DG.copy()
+        
+        # --- 3. Model Dot-Dot Mutual Capacitance (C_m) ---
+        C_m = np.zeros((batch_size, Nd, Nd))
+        # Use new parameter names: Cm_qq and Cm_sq
+        C_m_qq_mean = self.params.get("Cm_qq_mean", 8e-18)
+        C_m_qq_std = self.params.get("Cm_qq_std", 3e-18)
+        C_m_sq_mean = self.params.get("Cm_sq_mean", 1.5e-18)
+        C_m_sq_std = self.params.get("Cm_sq_std", 0.3e-18)
+        
+        # Scale by distance: k = C_mean * d_mean, then C = k / d
+        k_m_qq = C_m_qq_mean * d_nn_proxy
+        k_m_sq = C_m_sq_mean * d_nn_proxy
+
+        # Vectorized computation for all pairs (i, j) where i < j
+        for i in range(Nd):
+            for j in range(i + 1, Nd):
+                dist_ij = dot_distances_batch[:, i, j]  # (batch_size,) in meters
+                
+                if i < sensor_idx and j < sensor_idx:
+                    # Quantum-quantum dot coupling
+                    mean = k_m_qq / dist_ij  # (batch_size,) in Farads
+                    std_dev = C_m_qq_std * (d_nn_proxy / dist_ij)  # (batch_size,) in Farads
                 else:
-                    cuts = get_cut(config_tuple)
-                    cuts = cuts.reshape(1, *cuts.shape)
-            except ValueError as e:
-                print(f"Error generating cut(s): {e}")
-                return None
-            
-        use_sensor_signal = S > 0
-        
-        all_csd_data = []
-        all_polytopes = []
-        all_sensor_data = []
-        
-        for cut_idx in range(cuts.shape[0]):
-            current_cut = cuts[cut_idx] if cuts.shape[0] > 1 else cuts[0]
-            target_state = np.zeros(K, dtype=int) + 1
-            target_state[-S:] = 5
-            target_transition = current_cut[0] - current_cut[1]
-            
-            try:
-                if S == 0:
-                    capacitance_config, _, _ = generate_experiment_config(C_DD, C_DG, config_tuple, device)
-                    experiment = Experiment(capacitance_config)
-                    result = experiment.generate_CSD(
-                        x_voltages=x_vol,
-                        y_voltages=y_vol,
-                        plane_axes=current_cut,
-                        compute_polytopes=True,
-                    )
-                else:
-                    experiment = Experiment(*generate_experiment_config(C_DD, C_DG, config_tuple, device))
-                    result = experiment.generate_CSD(
-                        x_voltages=x_vol,
-                        y_voltages=y_vol,
-                        target_state=target_state,
-                        target_transition=target_transition,
-                        plane_axes=current_cut,
-                        compute_polytopes=True,
-                        use_sensor_signal=use_sensor_signal,
-                    )
+                    # Sensor-quantum dot coupling (one of i or j is sensor)
+                    mean = k_m_sq / dist_ij  # (batch_size,) in Farads
+                    std_dev = C_m_sq_std * (d_nn_proxy / dist_ij)  # (batch_size,) in Farads
                 
-                if result is None:
-                    print(f"generate_CSD returned None for cut {cut_idx}")
-                    continue
-                    
-                xks, yks, csd_dataks, polytopesks, sensor, _ = result
+                values = np.maximum(0.0, np.random.normal(mean, std_dev))
+                C_m[:, i, j] = values
+                C_m[:, j, i] = values
+
+
+        # --- 4. Build the Full C_DD Matrix (Maxwell Matrix) ---
+        # Use new parameter names: C0_q for qubit dots, C0_s for sensor dot
+        C0_q_mean = self.params.get("C0_q_mean", 8e-18)
+        C0_q_std = self.params.get("C0_q_std", 2e-18)
+        C0_s_mean = self.params.get("C0_s_mean", 30e-18)
+        C0_s_std = self.params.get("C0_s_std", 1e-18)
+        
+        # Generate substrate capacitance for each dot in each geometry
+        C_d0 = np.zeros((batch_size, Nd))
+        # Generate for qubit dots
+        for i in range(sensor_idx):
+            C_d0[:, i] = np.maximum(0.0, np.random.normal(C0_q_mean, C0_q_std, size=batch_size))
+        # Generate for sensor dot
+        C_d0[:, sensor_idx] = np.maximum(0.0, np.random.normal(C0_s_mean, C0_s_std, size=batch_size))
+        # --- 4. Build the Full C_DD Matrix (Maxwell Matrix) ---
+        C_DD = np.zeros((batch_size, Nd, Nd))
+        C_cap_to_all_gates = np.sum(C_DG, axis=2)  # (batch_size, Nd)
+
+        # Diagonal: sum of all gate capacitances + sum of mutual capacitances
+        for i in range(Nd):
+            C_DD[:, i, i] = C_cap_to_all_gates[:, i] + np.sum(C_m[:, i, :], axis=1) + C_d0[:, i]
+        
+        # Off-diagonal: negative mutual capacitances
+        for i in range(Nd):
+            for j in range(i + 1, Nd):
+                C_DD[:, i, j] = -C_m[:, i, j]
+                C_DD[:, j, i] = -C_m[:, i, j]
+        
+
+        # Fix sensor dot's self-capacitance (diagonal element) if specified
+        if "C_DD_sensor_diag_fixed" in self.params:
+            C_DD[:, sensor_idx, sensor_idx] = self.params["C_DD_sensor_diag_fixed"]
+
+        # --- 5. Derive C_DD_inv and E_matrix (vectorized matrix inversion) ---
+        C_DD_inv = np.zeros_like(C_DD)
+        E_matrix_meV = np.zeros_like(C_DD)
+        Ec_meV = np.zeros((batch_size, Nd))
+        
+        # Invert each matrix in the batch
+        for b in range(batch_size):
+            C_DD_inv[b] = np.linalg.inv(C_DD[b])
+            E_matrix_meV[b] = E_CONV_FACTOR * C_DD_inv[b]
+            Ec_meV[b] = np.diag(E_matrix_meV[b])
+        
+        # --- 6. Derive Canonical C_tilde_DD ---
+        C_tilde_DD = C_m.copy()
+        for i in range(Nd):
+            C_tilde_DD[:, i, i] = np.sum(C_DD[:, i, :], axis=1)
+        
+        # --- 7. Derive Tunnel Couplings (tc) with new formula ---
+        # New formula: tc = tc_max * exp(-att_per_nm * (d - d_min))
+        tc_meV = np.zeros((batch_size, Nd, Nd))
+        tc_max = self.params.get("tc_max_meV", 1.0)
+        att_per_nm = self.params.get("att_per_nm", 0.05)
+        d_dot_nm = self.params.get("d_dot_nm", self.params.get("d_min_nm", 50.0)/2)
+
+        for i in range(Ndots):
+            for j in range(i + 1, Ndots):
+                # Get distance between dots in nanometers
+                dist_ij_nm = dot_distances_batch[:, i, j] * 1e9  # (batch_size,) in nanometers
                 
-                all_csd_data.append(csd_dataks)
-                all_polytopes.append(polytopesks)
-                all_sensor_data.append(sensor if sensor is not None else None)
+                # New formula: tc = tc_max * exp(-att_per_nm * (d - d_min))
+                tc_values = tc_max * np.exp(-att_per_nm * (dist_ij_nm - 2*d_dot_nm))  
                 
-            except Exception as e:
-                print(f"Error in experiment generation for cut {cut_idx}: {e}")
-                print(f"Traceback: {traceback.format_exc()}")
-                continue
+                # Ensure non-negative and within bounds
+                tc_values = np.maximum(0.0, tc_values)
+                tc_values = np.minimum(tc_max, tc_values)
+                
+                tc_meV[:, i, j] = tc_values
+                tc_meV[:, j, i] = tc_values  # Symmetric
         
-        if not all_csd_data:  # If no successful generations
-            return None
-            
-        # Convert lists to arrays
-        all_csd_data = np.array(all_csd_data)
-        all_polytopes = np.array(all_polytopes)
-        all_sensor_data = np.array(all_sensor_data) if all_sensor_data[0] is not None else None
+        for b in range(batch_size):
+            if np.any(tc_meV[b, :, :] > 0.4):
+                for i in range(Ndots):
+                    for j in range(i + 1, Ndots):
+                        if tc_meV[b, i, j] > 0.4:
+                            print(f"i={i}, j={j}, dist_ij_nm={dot_distances_batch[b, i, j] * 1e9}, tc_value={tc_meV[b, i, j]}")
         
-        if S > 0:
-            return C_DD, C_DG, ks, cuts, xks, yks, all_csd_data, all_polytopes, all_sensor_data, device, sensors_coordinates
-        else:
-            return C_DD, C_DG, ks, cuts, xks, yks, all_csd_data, all_polytopes, None, device, sensors_coordinates
-            
-    except Exception as e:
-        print(f"Error in capacitance matrix generation: {e}")
-        print(f"Traceback: {traceback.format_exc()}")
-        return None 
-
-def ensure_path(path):
-    """
-    Ensure that the directory path exists, create it if it doesn't.
-    
-    Args:
-        path (str): Path to ensure exists
-    """
-    if not os.path.exists(path):
-        os.makedirs(path)
-        print(f"Created directory: {path}")
-    return path
-
-def count_directories_in_folder(config_tuple, system_name:str=None):
-    """Count the number of batch directories in a given folder."""
-    K, N, S = config_tuple
-    path = c.get_path(K, N, S, system_name)
-    
-    # Ensure the path exists before trying to list directories
-    # ensure_path(path)
-    
-    # Now safely list directories
-    batch_list = [x for x in os.listdir(path) if re.compile(r"batch-\d").match(x)] 
-    return sum(os.path.isdir(os.path.join(path, x)) for x in batch_list)
-
-def create_paths(config_tuple, system_name:str=None, path=None):
-    """Creates paths for datapoints and images."""
-    K, N, S = config_tuple
-    if path is None:
-        path = c.get_path(K, N, S, system_name)
+        # --- 8. Derive Alpha (vectorized matrix multiplication) ---
+        # alpha = C_DD_inv @ C_DG for each batch element
+        alpha = np.zeros((batch_size, Nd, Ng))
+        for b in range(batch_size):
+            alpha[b] = C_DD_inv[b] @ C_DG[b]
         
-    global PATH_IMG
-    global PATH_DPS
- 
-    # Ensure base path exists
-    ensure_path(path)
-    
-    batch_name = 'batch-' + str(count_directories_in_folder(config_tuple, system_name)+1)
-    full_path = os.path.join(path, batch_name)
-    
-    # Create batch directory
-    ensure_path(full_path)
-    
-    full_path_dps = full_path
-    full_path_img = os.path.join(full_path, 'imgs')
-    
-    # Create images directory
-    ensure_path(full_path_img)
+        return {
+            'C_tilde_DG': C_tilde_DG,
+            'C_DG': C_DG,
+            'C_m': C_m,
+            'C_DD': C_DD,
+            'C_DD_inv': C_DD_inv,
+            'E_matrix_meV': E_matrix_meV,
+            'Ec_meV': Ec_meV,
+            'C_tilde_DD': C_tilde_DD,
+            'tc_meV': tc_meV,
+            'alpha': alpha,
+            'dot_distances_batch': dot_distances_batch
+        }
 
-    PATH_IMG = full_path_img
-    PATH_DPS = full_path_dps
-
-def clean_batch():
-    # if not os.path.isfile(PATH_IMG):
-    #     os.rmdir(PATH_IMG)
-    # else:
-    #     for f in os.listdir(PATH_IMG):
-    #         os.remove(os.path.join(PATH_IMG, f))
-    #         
-    #     os.rmdir(PATH_IMG)
-
-    if not os.path.isfile(PATH_DPS):
-        try:
-            shutil.rmtree(PATH_DPS)
-        except Exception as e:
-            print("Unable to clean empty batch folder!")
-            print(f'{e}')
-
-def save_img_csd_from_figs(config_tuple, figs, cuts, save_images=True):
-    """
-    Convert matplotlib figures to tensors and optionally save images.
-    
-    Args:
-        config_tuple (tuple): (K, N, S) configuration
-        figs (list or matplotlib.figure.Figure): List of matplotlib figures for each cut and sensor, or single figure
-        cuts (np.ndarray): Array of cuts used to generate the CSDs
-        save_images (bool): Whether to also save images to disk. If False, only converts to tensors.
-    
-    Returns:
-        tuple: (base_name, list of img_names, list of csd_tensors)
-    """    
-    K, N, S = config_tuple
-    
-    # Generate base name
-    base_name = ''.join([str(random.randint(0, 9)) for _ in range(10)])
-    
-    # Normalize figs to a list
-    if not isinstance(figs, (list, np.ndarray)):
-        figs = [figs]
-    
-    # Normalize cuts to a list if needed
-    if not isinstance(cuts, (list, np.ndarray)):
-        cuts = [cuts]
-        
-    # Build list of (fig, cut_idx, sensor_idx) tuples for unified processing
-    fig_data = []
-    fig_idx = 0
-    
-    if S > 0:  # Sensor data: figs are organized as [cut0_s0, cut0_s1, ..., cut1_s0, ...]
-        for cut_idx in range(len(cuts)):
-            for sensor_idx in range(S):
-                if fig_idx < len(figs):
-                    fig_data.append((figs[fig_idx], cut_idx, sensor_idx))
-                    fig_idx += 1
-    else:  # Regular CSD: one fig per cut
-        for cut_idx in range(len(figs)):
-            fig_data.append((figs[cut_idx], cut_idx, None))
-    
-    # Single unified processing loop
-    img_names = []
-    csd_tensors = []
-    
-    for fig, cut_idx, sensor_idx in fig_data:
-        # Generate cut name
-        if cut_idx < len(cuts):
-            indices = [np.argwhere(c == 1).squeeze().tolist() for c in cuts[cut_idx]]
-            cut_name = '_' + ''.join(str(i) for i in indices)
-        else:
-            cut_name = ''
-        
-        # Generate image name
-        if sensor_idx is not None:
-            img_name = f"{base_name}{cut_name}_s{sensor_idx}.png"
-        else:
-            img_name = f"{base_name}{cut_name}.png" if cut_name else f"{base_name}.png"
-        img_names.append(img_name)
-        
-        # Convert figure directly to numpy array using canvas buffer
-        canvas = FigureCanvasAgg(fig)
-        canvas.draw()
-        
-        # Get the RGBA buffer and convert to image array
-        buf = canvas.buffer_rgba()
-        image_array = np.asarray(buf)
-        
-        # Convert RGBA to RGB (drop alpha channel)
-        if len(image_array.shape) == 3 and image_array.shape[2] == 4:
-            image_array = image_array[:, :, :3]
-        
-        # Convert to tensor format [C, H, W]
-        if len(image_array.shape) == 2:
-            # Grayscale: add channel dimension
-            csd_tensor = torch.tensor(image_array[None, :, :], dtype=torch.uint8)
-        else:
-            # RGB: permute from [H, W, C] to [C, H, W]
-            csd_tensor = torch.tensor(image_array).permute(2, 0, 1)
-        
-        csd_tensors.append(csd_tensor)
-        
-        # Optionally save to disk if requested
-        if save_images:
-            group_dir = os.path.join(PATH_IMG, base_name) if len(figs) > 1 else PATH_IMG
-            full_path_img = os.path.join(group_dir, img_name)
-            ensure_path(group_dir)
-            
-            fig.savefig(full_path_img, format='png', 
-                       bbox_inches='tight', pad_inches=0, dpi=c.DPI)
-        
-        plt.close(fig)
-    
-    return base_name, img_names, csd_tensors
-
-def save_to_json(dictionary: dict):
-    """
-        Save the datapoints to a json file.
-        # TODO: It only saves the last img -> fix it
-    """      
-    full_path_dps = os.path.join(PATH_DPS, 'datapoints.json')
-    
-    try:
-        if os.path.exists(full_path_dps):
-            with open(full_path_dps, 'r') as f:
-                data = json.load(f)
-        else:
-            data = {}
-        data.update(dictionary)
-
-        with open(full_path_dps, 'w') as f:
-            json.dump(data, f)
-
-    except Exception as e:
-        print(f"Json file no longer updated!")
-        print(f"Error: {e}")
-
-
-def save_to_hfd5(dictionary: dict):
-    """
-    Save the datapoints to an HDF5 file with organized group structure.
-    
-    Structure:
-    base_name/
-        ├── attributes (K, N, S, etc.)
-        ├── C_DD/
-        ├── C_DG/
-        ├── x_vol/
-        ├── y_vol/
-        ├── cuts/
-        ├── sensor_output/
-        ├── csd/
-        ├── csd_gradient/
-        ├── device/
-        └── sensors_coordinates/
-    """
-    full_path_dps = os.path.join(PATH_DPS, 'datapoints.h5')
-
-    with h5py.File(full_path_dps, 'a') as f:
-        for img_name, value in dictionary.items():
-            base_name = value['base_name']
-            
-            # Create main group if it doesn't exist
-            if base_name in f:
-                del f[base_name]  # Delete existing group if it exists
-            main_group = f.create_group(base_name)
-            
-            # Save attributes
-            attributes = [
-                'K', 'N', 'S', 
-                'tunnel_coupling_const', 
-                'slow_noise_amplitude', 
-                'fast_noise_amplitude',
-                'ks',
-                'p_dd', 'p_dg',
-                'd_DD', 'd_DG',
-                'r_min', 'r_max'
-            ]
-            
-            for attr in attributes:
-                if attr in value:
-                    main_group.attrs[attr] = value[attr]
-            
-            # Create datasets for matrices and arrays
-            datasets = {
-                'C_DD': value['C_DD'],
-                'C_DG': value['C_DG'],
-                'x_vol': value['x_vol'],
-                'y_vol': value['y_vol'],
-                'cuts': value['cuts'],
-                'sensor_output': value['sensor_output'],
-                'csd': value['csd'],
-                'csd_gradient': value['csd_gradient'],
-                'device': value['device'],
-                'sensors_coordinates': value['sensors_coordinates']
-            }
-            
-            # Save each dataset in its own group
-            for name, data in datasets.items():
-                if data is not None:  # Only save if data exists
-                    data_group = main_group.create_group(name)
-                    if name in ['cuts', 'csd', 'sensor_output', 'csd_gradient']:
-                        # These might have multiple items
-                        for idx, item in enumerate(data):
-                            data_group.create_dataset(f'item_{idx}', data=item)
-                    else:
-                        # Single item datasets
-                        data_group.create_dataset('data', data=data)
-
-def get_batch_folder_name(batch_num: int, config_tuple: tuple[int, int, int], system_name:str=None):
-    """
-        Get the batch folder name.
-    """
-    K, N, S = config_tuple
-    if batch_num <= count_directories_in_folder(config_tuple, system_name):
-        return 'batch-' + str(batch_num)
+def get_virtual_gate_transitions( 
+    alpha: np.ndarray,
+    Nd: int,
+    C_DD_inv: np.ndarray,
+    base_charge_state: np.ndarray = None,
+) -> np.ndarray:
+    """Return gate-voltage vectors that realise 0→1 transitions per dot."""
+    if base_charge_state is None:
+        base_charge_state = np.zeros( Nd, dtype=int)
     else:
-        print(ValueError(f"Batch number is too high! Max: {count_directories_in_folder(config_tuple, system_name)}!"))
-        return None
-
-def get_path_hfd5(batch_num: int, config_tuple: tuple[int, int, int], v: bool=False, system_name:str=None):
-    """
-        Get the path to the hfd5 file.
-        For now it is for testing and not yet finished.
-    """
-    K, N, S = config_tuple
-    batch_name = get_batch_folder_name(batch_num, config_tuple, system_name)
-    path = c.get_path(K, N, S, system_name)
-    full_path_dps = os.path.join(path, batch_name, 'datapoints.h5')
-          
-    return full_path_dps
-
-def check_and_correct_img_name(img_name: str):
-    if not re.compile(r"^\d+\.png$").match(img_name):
-        return img_name + ".png"
-    else:
-        return img_name
-
-def load_csd_img(batch_num: int, csd_name: str, config_tuple: tuple[int, int, int], system_name:str=None, show: bool=False):
-    """
-        Load the PNG file 
-    """
-    K, N, S = config_tuple
-    csd_name = check_and_correct_img_name(csd_name)
-    path = c.get_path(K, N, S, system_name)
-    path = os.path.join(path, get_batch_folder_name(batch_num, config_tuple), 'imgs', csd_name)
-    
-    img = Image.open(path)
-    if show:
-        img.show() 
-    
-    return img 
-
-def reconstruct_img_from_tensor(tensor:np.ndarray):
-    return Image.fromarray((tensor.transpose(1, 2, 0) * 255).astype(np.uint8))
-    # return Image.fromarray((tensor.transpose(1, 2, 0)))
-
-def reconstruct_img_with_matrices(batch_num: int, img_name: str, config_tuple: tuple[int, int, int], system_name:str=None, show: bool=False):
-    """
-    Reconstruct image and get associated matrices from HDF5 file.
-    """
-    img_name = check_and_correct_img_name(img_name)
-    path = get_path_hfd5(batch_num, config_tuple, system_name)
-    print(f"The file path: {path}")
-
-    with h5py.File(path, 'r') as f:
-        img = f[img_name]['csd'][:]
-        C_DD = f[img_name]['C_DD'][:]
-        C_DG = f[img_name]['C_DG'][:]
-
-        img = Image.fromarray((img.transpose(1, 2, 0)))
-        plt.axis('off')
-
-        if show:
-            img.show()
-            print(img)
-            
-            print("C_DD matrix:")
-            print(C_DD)
-            print("\nC_DG matrix:")
-            print(C_DG)
-        
-        return img, C_DD, C_DG
-    
-def save_datapoints(config_tuple, C_DD, C_DG, ks, x_vol, y_vol, cuts, poly, csd, sensor_output, csd_plots, csd_gradient, device, sensors_coordinates, save_png_images):
-    """
-    Combine all 'saving' functions to create a datapoint.
-    """
-    K, N, S = config_tuple
-   
-    # Convert figures directly to tensors (no save/load roundtrip)
-    base_name, img_names, csd_tensors = save_img_csd_from_figs(config_tuple, csd_plots, cuts, save_png_images)
-    
-    for img_name, csd in zip(img_names, csd_tensors):
-        if isinstance(csd_gradient, list):
-            csd_gradient = np.array(csd_gradient)
-        
-        datapoints_dict = {img_name: {
-        # Metadata attributes
-        'K': K, 
-        'N': N,
-        'S': S,
-        'tunnel_coupling_const': c.tunnel_coupling_const,
-        'slow_noise_amplitude': c.slow_noise_amplitude,
-        'fast_noise_amplitude': c.fast_noise_amplitude,
-        'ks': np.nan if ks is None else ks,
-        'p_dd': c.lambda_coeff_dd,
-        'p_dg': c.lambda_coeff_dg,
-        'dd_avg': c.dd_avg,
-        'dd_std': c.dd_std,
-        'dg_avg': c.dg_avg,
-        'dg_std': c.dg_std,
-        'd_DD': c.d_DD,
-        'd_DG': c.d_DG,
-        'r_min': c.r_min,
-        'r_max': c.r_max,
-        'base_name': base_name,
-        
-        # Dataset groups
-        'C_DD': C_DD,
-        'C_DG': C_DG,
-        'x_vol': np.array(x_vol),
-        'y_vol': np.array(y_vol),
-        'cuts': np.array(cuts),
-        'sensor_output': sensor_output if sensor_output is not None else np.array([]),
-        'csd': csd,
-        'csd_gradient': csd_gradient,
-        'device': device,
-        'sensors_coordinates': sensors_coordinates if sensors_coordinates is not None else np.array([])
-        }} # 24 elements 
-    
-        save_to_hfd5(datapoints_dict)
-
-
-def generate_dataset(args):
-    x_vol, y_vol, ks, device, i, N_batch, config_tuple, sensors_radius, sensors_angle, const_sensors_radius, all_euclidean_cuts, cut = args
-    K, N, S = config_tuple
-    print(f"Generating datapoint {i+1}/{N_batch}:")
-    print(f"Configuration: K={K}, N={N}, S={S}")
+        base_charge_state = np.asarray(base_charge_state)
+        if len(base_charge_state) != Nd:
+            raise ValueError("base_charge_state must match the number of dots.")
 
     try:
-        # Create unique seed
-        process_id = os.getpid()
-        current_time = int(time.time() * 1000)
-        unique_seed = (process_id + current_time + i) % (2**32 - 1)
-        
-        # Set the seed for numpy and random
-        np.random.seed(unique_seed)
-        random.seed(unique_seed)
-        
-        result = generate_datapoint(x_vol, y_vol, ks, device, config_tuple, sensors_radius, sensors_angle, const_sensors_radius, cut, all_euclidean_cuts)
-        if result is None:
-            return None
-            
-        C_DD, C_DG, ks, cut, x, y, csd, poly, sensor, device, sensors_coordinates = result
-        
-        if S == 0:
-            fig, _ = plot_CSD(x, y, csd, poly, only_labels=False)
-            gradient = np.gradient(csd.squeeze(),axis=0)+np.gradient(csd.squeeze(),axis=1)
-            return (C_DD, C_DG, ks, cut, x_vol, y_vol, csd, poly, sensor, fig, gradient, device, sensors_coordinates)
-        elif S >= 1:
-            figs = [fig for fig, _ in plot_CSD(x, y, sensor, poly, only_labels=True, only_edges=True)]
-            gradients = [np.gradient(s,axis=0)+np.gradient(s,axis=1) for s in sensor]
-            return (C_DD, C_DG, ks, cut, x_vol, y_vol, csd, poly, sensor, figs, gradients, device, sensors_coordinates)
+        alpha_inv = np.linalg.inv(alpha)
+    except np.linalg.LinAlgError as exc:
+        raise ValueError("Alpha matrix is singular; transitions are undefined.") from exc
 
-    except Exception as e:
-        print(f"Execution failed for datapoint {i+1}!")
-        print(f"Error: {e}")
-        # print("\nFull traceback:")
-        # traceback.print_exc(file=sys.stdout)
-        print(f"Traceback: {traceback.format_exc()}")
-        return None
+    transition_voltages = np.zeros((Nd, Nd))
+    for i in range(Nd):
+        v_i_full = alpha_inv[:, i]
+        term1_V = -e * (C_DD_inv[i, :] @ base_charge_state)
+        term2_V = -(e / 2.0) * C_DD_inv[i, i]
+        V_i_scalar = term1_V + term2_V
+        transition_voltages[i] = v_i_full * V_i_scalar
 
-def ensure_dir_exists(path):
+    return transition_voltages
+
+def get_coulomb_diamond_sizes(C_DG: np.ndarray):
     """
-    Check if the directory exists, and if not, create it.
+    Calculate coulomb diamond sizes for each gate.
     
-    Args:
-        path (str): The directory path to check/create.
+    For each gate j, the diamond size is calculated using the lever arm
+    of the primary dot (dot j) to that gate.
     """
-    if not os.path.exists(path):
-        os.makedirs(path)
-        print(f"Created directory: {path}")
+    return e/np.diag(C_DG)
 
-def plot_device_lattice(device: np.ndarray, sensors: list[tuple[int, int]], figsize=(4, 4), dot_size=25, show_grid=True):
-    """
-    Plot dots in a lattice according to the device configuration.
+def load_config(config_path: str) -> dict:
+    """Load configuration from JSON file."""
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+    return config
+
+
+def config_to_params(config: dict) -> dict:
+    """Convert JSON config to params dictionary for QuantumDotModel."""
+    params = {}
     
-    Args:
-        device (np.ndarray): Binary array where 1s represent dots
-        figsize (tuple): Figure size in inches (default: (4, 4))
-        dot_size (int): Size of the dots in the plot (default: 100)
-        show_grid (bool): Whether to show the grid lines (default: True)
+    # System configuration
+    params['Ndots'] = config['system']['Ndots']
+    params['Ngates'] = config['system']['Ngates']
+    
+    # Geometry parameters
+    params.update(config['geometry'])
+    
+    # Sensor configuration
+    params.update(config['sensor_config'])
+    
+    # Parasitic capacitance
+    params.update(config['parasitic_capacitance'])
+    
+    # Mutual capacitance
+    params.update(config['mutual_capacitance'])
+    
+    # Gate capacitance
+    params.update(config['gate_capacitance'])
+    
+    # Tunnel coupling
+    params.update(config['tunnel_coupling'])
+    
+    return params
+
+
+def plane_axes_from_pair(pair: tuple, Ng: int) -> np.ndarray:
+    """Create plane axes from gate pair."""
+    axes = np.zeros((2, Ng), dtype=float)
+    axes[0, pair[0]] = 1.0
+    axes[1, pair[1]] = 1.0
+    return axes
+
+
+def generate_cuts(Ndots: int, Nsensors: int, sensor_gate_idx: int) -> list:
+    """Generate all possible cuts (combinations of target gates)."""
+    # Target gates exclude the sensor gate
+    target_gate_indices = [idx for idx in range(Ndots + Nsensors) if idx != sensor_gate_idx]
+    plane_axis_specs = list(combinations(target_gate_indices, 2))
+    return plane_axis_specs
+
+
+def generate_datapoint(
+    config: dict,
+    datapoint_id: int,
+    output_dir: str
+) -> bool:
+    """
+    Generate a single data point with all cuts and save to folder.
     
     Returns:
-        tuple: (fig, ax) matplotlib figure and axis objects
+        bool: True if successful, False otherwise
     """
-    # Get dot coordinates
-    dot_coords = get_dots_coordinates(device)
+    # Extract system parameters
+    Ndots = config['system']['Ndots']
+    Nsensors = config['system']['Nsensors']
+    Ngates = config['system']['Ngates']
+    Nd = Ndots + Nsensors
+    sensor_idx = config['sensor_config']['sensor_idx']
+    sensor_gate_idx = config['sensor_config']['sensor_gate_idx']
+    n_diamonds_factor = config['system']['n_diamonds_factor']
+    resolution = config['system']['resolution']
+    # Convert config to params
+    params = config_to_params(config)
     
-    # Create figure and axis
-    fig, ax = plt.subplots(figsize=figsize)
+    # Create output directory for this data point
+    datapoint_dir = os.path.join(output_dir, f"datapoint_{datapoint_id:05d}")
+    os.makedirs(datapoint_dir, exist_ok=True)
     
-    # Plot dots
-    x_coords = [coord[0] for coord in dot_coords]
-    y_coords = [coord[1] for coord in dot_coords]
-    
-    # Plot dots with numbers
-    for i, (x, y) in enumerate(zip(x_coords, y_coords)):
-        ax.scatter(x, y, s=dot_size, c='black',  marker='o', zorder=2)
-        # ax.text(x, y, str(i), color='black', ha='center', va='center', fontweight='bold')
-    
-    for i,s in enumerate(sensors):
-        x, y = transform_to_cartesian(s[0], s[1])
-        x_coords.append(x/c.d_DD)
-        y_coords.append(y/c.d_DD)
-        # ax.scatter(x/c.d_DD, y/c.d_DD, s=dot_size, c='red', marker='*', zorder=2)
-        ax.text(x/c.d_DD, y/c.d_DD, 's'+str(i), color='red', ha='center', va='center', fontsize=12)
-
-
-    # Set equal aspect ratio
-    ax.set_aspect('equal')
-    
-    # Set grid
-    if show_grid:
-        ax.grid(True, linestyle='--', alpha=0.7, zorder=1)
-    
-    # Set limits with some padding
-    x_min, x_max = min(x_coords), max(x_coords)
-    y_min, y_max = min(y_coords), max(y_coords)
-    padding = 1
-    ax.set_xlim(x_min - padding, x_max + padding)
-    ax.set_ylim(y_min - padding, y_max + padding)
-    
-    # Set labels
-    ax.set_xlabel('x')
-    ax.set_ylabel('y')
-    ax.set_title('Device Dot Configuration')
-    
-    plt.tight_layout()
-    return fig, ax
-
-def load_parameters(batch_num: int, img_name: str, config_tuple: tuple[int, int, int],  param_names: list[str],
-                    system_name:str=None, print_available_params: bool=False) -> dict:
-    """
-    Load specific parameters from HDF5 file for a given image.
-    
-    Args:
-        batch_num (int): Batch number
-        img_name (str): Name of the image file
-        config_tuple (tuple[int, int, int]): Tuple of (K, N, S)
-        system_name (str): Name of the system
-        param_names (list[str]): List of parameter names to load
-        print_available_params (bool): Whether to print available parameters (default: False)
-    Returns:
-        dict: Dictionary containing requested parameters
-    """
-    img_name = check_and_correct_img_name(img_name)
-    path = get_path_hfd5(batch_num, config_tuple, system_name)
-    
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"HDF5 file not found at: {path}")
-    
-    result = {}
     try:
-        with h5py.File(path, 'r') as f:
-            if img_name not in f:
-                raise KeyError(f"Image {img_name} not found in HDF5 file")
-                
-            group = f[img_name]
-            
-            # Get list of all available parameters (datasets and attributes)
-            available_datasets = list(group.keys())
-            available_attrs = list(group.attrs.keys())
-            
-            if print_available_params:
-                print(f"\nAvailable parameters for {img_name}:")
-                print(f"Datasets: {available_datasets}")
-                print(f"Attributes: {available_attrs}\n")
-            
-            for param in param_names:
-                # Check if parameter is an attribute
-                if param in group.attrs:
-                    result[param] = group.attrs[param]
-                    continue
-                    
-                # Check if parameter is a dataset
-                if param in group:
-                    result[param] = group[param][:]
-                    continue
-                    
-                # Parameter not found
-                print(f"Warning: Parameter '{param}' not found for image {img_name}")
-                result[param] = None
-                    
-    except Exception as e:
-        print(f"Error loading parameters: {e}")
-        print(f"\nAvailable parameters for {img_name}:")
-        print(f"Datasets: {available_datasets}")
-        print(f"Attributes: {available_attrs}\n")
-        print(f"Traceback: {traceback.format_exc()}")
-        return None
+        # Initialize quantum dot model
+        Qdots = QuantumDotModel(Nd, Ngates, params)
         
-    return result
+        # Generate geometry (single configuration)
+        all_distances, all_coords = Qdots._generate_dot_distances_2d_batch(
+            Nconfigurations=1,
+            batch_size=100
+        )
+        
+        # Generate capacitance data
+        capacitance_data = Qdots._generate_from_physics_batch(all_distances)
+        
+        # Extract single configuration (remove batch dimension)
+        geometry = all_coords[0]  # (Nd, 2)
+        C_tilde_DD = capacitance_data['C_tilde_DD'][0]  # (Nd, Nd)
+        C_DG = capacitance_data['C_DG'][0]  # (Nd, Ng)
+        tc_meV = capacitance_data['tc_meV'][0]  # (Nd, Nd)
+        alpha = capacitance_data['alpha'][0]  # (Nd, Ng)
+        E_matrix_meV = capacitance_data['E_matrix_meV'][0]  # (Nd, Nd)
+        C_DD_inv = capacitance_data['C_DD_inv'][0]  # (Nd, Nd)
+        
+        # Deploy experiment
+        qdarts_params = config['qdarts']
+        system_matrices = {
+            "C_tilde_DD": C_tilde_DD,
+            "C_DG": C_DG,
+            "tc_meV": tc_meV
+        }
+        
+        capacitance_config = {
+            "C_DD": np.abs(C_tilde_DD) * 1e18,  # Convert to attoFarads
+            "C_Dg": np.abs(C_DG) * 1e18,
+            "ks": None,
+        }
+        
+        tunneling_config = {
+            "tunnel_couplings": tc_meV * 1e-3,  # Convert to eV
+            "temperature": qdarts_params["temperature"],
+            "energy_range_factor": qdarts_params["energy_range_factor"],
+        }
+        
+        sensor_config = {
+            "sensor_dot_indices": [sensor_idx],
+            "sensor_detunings": qdarts_params["sensor_detunings"],
+            "noise_amplitude": qdarts_params["noise_amplitude"],
+            "peak_width_multiplier": qdarts_params["peak_width_multiplier"],
+        }
+        
+        experiment = Experiment(capacitance_config, tunneling_config, sensor_config)
+        
+        # Get base state and transition vectors
+        cap_sim = experiment.capacitance_sim
+        base_state_hint = np.zeros(cap_sim.num_dots, dtype=int)
+        base_state_hint[sensor_idx] = 5
+        base_state = cap_sim.find_state_of_voltage(np.zeros(cap_sim.num_dots), state_hint=base_state_hint)
+        base_state[sensor_idx] = 5
+        
+        transition_vectors = get_virtual_gate_transitions(
+            alpha=alpha,
+            Nd=Nd,
+            C_DD_inv=C_DD_inv,
+            base_charge_state=base_state,
+        )
+        
+        v_offset = -np.sum(transition_vectors, axis=0)  # (Ng,)
+        
+        # Get coulomb diamond sizes
+        coulomb_diamond_sizes = get_coulomb_diamond_sizes(C_DG)
+        
+        # Generate cuts
+        cuts = generate_cuts(Ndots, Nsensors, sensor_gate_idx)
+        Ncuts = len(cuts)
+        
+        # Store full plane axes arrays
+        cuts_axes = []  # Store full plane axes arrays
+        
+        # Process each cut
+        for cut_idx, cut_pair in enumerate(cuts):
+            axes = plane_axes_from_pair(cut_pair, Ngates)
+            cuts_axes.append(axes)  # Store full axes array
+            span_x = coulomb_diamond_sizes[cut_pair[0]]
+            span_y = coulomb_diamond_sizes[cut_pair[1]]
+            
+            # Generate voltage ranges
+            x_voltages = np.linspace(-0.4 * span_x, n_diamonds_factor * span_x, resolution)
+            y_voltages = np.linspace(-0.4 * span_y, n_diamonds_factor * span_y, resolution)
+            
+            # Generate CSD
+            xout, yout, _, polytopes, sensor_values, _ = experiment.generate_CSD(
+                plane_axes=axes,
+                x_voltages=x_voltages,
+                y_voltages=y_voltages,
+                v_offset=v_offset,
+                compute_polytopes=True,
+                compensate_sensors=False,
+                use_virtual_gates=False,
+                use_sensor_signal=True,
+            )
+            
+            # Save PNG with cut index as filename
+            fig, ax = plt.subplots(figsize=(1.0, 1.0))
+            ax.pcolormesh(
+                1e3 * xout - 1e3 * v_offset[cut_pair[0]],
+                1e3 * yout - 1e3 * v_offset[cut_pair[1]],
+                sensor_values[:, :, 0].T,
+                cmap='viridis'
+            )
+            #plot_polytopes(ax, polytopes, axes_rescale=1e3)
+            #ax.set_xlabel(f'Gate {cut_pair[0]} Voltage (mV)')
+            #ax.set_ylabel(f'Gate {cut_pair[1]} Voltage (mV)')
+            #ax.set_title(f'Cut {cut_str}')
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.axis('off')  # Remove axes completely
+            ax.set_position([0, 0, 1, 1])  # Make axes fill entire figure
+            plt.savefig(os.path.join(datapoint_dir, f"cut_{cut_idx}.png"), dpi=int(resolution), pad_inches=0, bbox_inches='tight')
+            plt.close()
+        
+        # Store voltage parameters [x0, x1, N] for each cut
+        # x_voltage and y_voltage should be (batch_size, Ncuts, 3) where 3 = [x0, x1, N]
+        x_voltage_params = np.zeros((Ncuts, 3))  # [x0, x1, N] for each cut
+        y_voltage_params = np.zeros((Ncuts, 3))  # [y0, y1, N] for each cut
+        
+        for cut_idx, cut_pair in enumerate(cuts):
+            span_x = coulomb_diamond_sizes[cut_pair[0]]
+            span_y = coulomb_diamond_sizes[cut_pair[1]]
+            x_voltage_params[cut_idx] = [-0.4 * span_x, 2.1 * span_x, resolution]
+            y_voltage_params[cut_idx] = [-0.4 * span_y, 2.1 * span_y, resolution]
+        
+        # Convert cuts_axes to numpy array: (Ncuts, 2, Ng)
+        cuts_axes_array = np.array(cuts_axes)  # (Ncuts, 2, Ng)
+        
+        # Prepare data for saving
+        # Add batch dimension (batch_size=1) to match requested format
+        data_dict = {
+            'C_tilde_DD': C_tilde_DD[np.newaxis, :, :],  # (1, Nd, Nd)
+            'C_DG': C_DG[np.newaxis, :, :],  # (1, Nd, Ng)
+            'geometry': geometry[np.newaxis, :, :],  # (1, Nd, 2)
+            'tc_meV': tc_meV[np.newaxis, :, :],  # (1, Nd, Nd)
+            'v_offset': v_offset[np.newaxis, :],  # (1, Ng)
+            'x_voltage': x_voltage_params[np.newaxis, :, :],  # (1, Ncuts, 3) - [x0, x1, N] for each cut
+            'y_voltage': y_voltage_params[np.newaxis, :, :],  # (1, Ncuts, 3) - [y0, y1, N] for each cut
+            'alpha': alpha[np.newaxis, :, :],  # (1, Nd, Ng)
+            'E_c': E_matrix_meV[np.newaxis, :, :],  # (1, Nd, Nd) - using E_matrix_meV as E_c
+            'cuts': cuts_axes_array[np.newaxis, :, :, :],  # (1, Ncuts, 2, Ng) - full plane axes arrays
+        }
+        
+        # Save data as .npz file (includes cuts)
+        np.savez(os.path.join(datapoint_dir, "data.npz"), **data_dict)
+        
+        print(f"Generated datapoint {datapoint_id:05d} with {Ncuts} cuts")
+        return True
+        
+    except Exception as e:
+        print(f"Error generating datapoint {datapoint_id:05d}: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
-def parse_array(string):
+def print_keys_in_datapoint(path_to_file: str) -> dict:
     """
-    Parse string representation of array to numpy array.
-    Examples:
-        "[[1,1], [1,1]]" -> np.array([[1,1], [1,1]])
-        "[1,1,1]" -> np.array([1,1,1])
+    Print all keys in a datapoint.
     """
-    try:
-        # Convert string to Python list
-        array_list = ast.literal_eval(string)
-        # Convert to numpy array
-        return np.array(array_list)
-    except (ValueError, SyntaxError) as e:
-        raise argparse.ArgumentTypeError(f"Not a valid array: {string}") from e
+    keys = list(np.load(path_to_file).keys())
+    return keys
 
-def get_group_names_from_hfd5(path: str) -> list[str]:
+def load_datapoints_under_key(path:str, number_of_realizations:int, key:str) -> dict:
     """
-    Get the group names from the HDF5 file.
+    Load all datapoints under a given key from a given path.
     """
-    with h5py.File(path, 'r') as f:
-        return list(f.keys())
+    loaded_values = []
+    for i in range(number_of_realizations):
+        datapoint_dir = os.path.join(path, f"datapoint_{i:05d}")
+        datapoint = np.load(os.path.join(datapoint_dir, "data.npz"))
+        loaded_values.append(datapoint[key])
+    return loaded_values
 
-def get_random_group_name_from_hfd5(path: str) -> str:
-    """
-    Get a random group name from the HDF5 file.
-    """
-    with h5py.File(path, 'r') as f:
-        return random.choice(list(f.keys()))
+
+
+def preprocess_datapoint(datapoint_dir: str) -> dict:
+    pass

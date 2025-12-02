@@ -28,6 +28,7 @@ from qdarts.plotting import plot_polytopes
 from src.models.transfer_CNN import ResNet
 from src.models.vanilla_CNN import VanillaCNN
 
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ----------------------------- LOAD DATA
 def load_datapoints(config_tuple, param_names:list, all_batches=True, batches:list=None, system_name:str=None):
