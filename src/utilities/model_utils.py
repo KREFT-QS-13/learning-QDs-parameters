@@ -19,15 +19,16 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
-import utilities.config as c
-import utilities.utils as u
+import src.utilities.config as c
+import src.utilities.utils as u
 sys.path.append('./qdarts')
 from qdarts.experiment import Experiment
 from qdarts.plotting import plot_polytopes
 
-from models.transfer_CNN import ResNet
-from models.vanilla_CNN import VanillaCNN
+from src.models.transfer_CNN import ResNet
+from src.models.vanilla_CNN import VanillaCNN
 
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ----------------------------- LOAD DATA
 def load_datapoints(config_tuple, param_names:list, all_batches=True, batches:list=None, system_name:str=None):

@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models
 
-import utilities.config as c
+import src.utilities.config as c
 
 class VanillaCNN(nn.Module):
     def __init__(self, name, num_conv_layers=4, filters_per_layer=None, kernel_sizes=None, 

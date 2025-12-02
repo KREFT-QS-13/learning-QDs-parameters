@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models
-import utilities.config as c
+import src.utilities.config as c
     
 class ResNet(nn.Module):
     def __init__(self, config_tuple, name="transfer_model", base_model='resnet18', pretrained=True, 
