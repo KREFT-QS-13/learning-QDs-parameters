@@ -619,7 +619,7 @@ Generating realization 941/5000...
 ```
 
 TODO:
- - [ ] Make sure that if the ther is a error, the instantce will be completly erased, so that will not have isisues with ID number addressing empty or incomplete datapoints. In effect, the final ID number will be smaller than set at the begining.
+ - [v] Make sure that if there is an error, the instance will be completely erased, so that it will not have issues with ID number addressing empty or incomplete datapoints. In effect, the final ID number will be smaller than set at the begining.
  - [ ] Make GitHub issue out of them
 
 
