@@ -29,11 +29,17 @@ def main():
     folder_name =  f'{system_name}__{count_umber_of_folders(path_to_end_folder, system_name)+1}'
     Number_of_realizations = config["CSD_generation"]["number_of_realizations"] # number of realizations
 
+    # Create the main system folder at the start
+    system_folder_path = os.path.join(path_to_end_folder, folder_name)
+    os.makedirs(system_folder_path, exist_ok=True)
+    print(f"Created system folder: {system_folder_path}")
+
     print("Dataset generation configuration:")  
     print(f"K: {Ndots + Nsensors}, N: {Ndots}, S: {Nsensors}")
     print(f"System name: {system_name}")
     print(f"Save PNG images: {save_png_images}")
     print(f"Path where the dataset will be saved: {path_to_end_folder}")
+    print(f"System folder: {folder_name}")
     print(f"Starting generation of {Number_of_realizations} realizations...")
 
     start_time = time.time()
@@ -42,7 +48,7 @@ def main():
     
     for i in range(Number_of_realizations):
         print(f"Generating realization {i+1}/{Number_of_realizations}...")
-        success = u.generate_datapoint(config, successful_count, os.path.join(path_to_end_folder, folder_name))
+        success = u.generate_datapoint(config, successful_count, system_folder_path)
         if success:
             successful_count += 1
         else:
@@ -51,6 +57,7 @@ def main():
     
     end_time = time.time()
     print(f"\nGeneration complete!")
+    print(f"Saved under the path: {system_folder_path}")
     print(f"Successfully generated: {successful_count} datapoints")
     print(f"Successful/Failed ratio: {successful_count}/{failed_count}")
     print(f"Time taken: {end_time - start_time:.2f} seconds.")

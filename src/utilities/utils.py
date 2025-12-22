@@ -457,11 +457,13 @@ def generate_datapoint(
     sensor_gate_idx = config['sensor_config']['sensor_gate_idx']
     n_diamonds_factor = config['system']['n_diamonds_factor']
     resolution = config['system']['resolution']
+    num_realizations = config['CSD_generation']['number_of_realizations']
     # Convert config to params
     params = config_to_params(config)
     
     # Don't create folder yet - only create after successful generation
-    datapoint_dir = os.path.join(output_dir, f"datapoint_{datapoint_id:05d}")
+    num_digits = len(str(num_realizations))
+    datapoint_dir = os.path.join(output_dir, f"datapoint_{datapoint_id:0{num_digits}d}")
     
     try:
         # Initialize quantum dot model
