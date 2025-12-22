@@ -36,6 +36,8 @@ test/
 generated_data/
 ALICE/
 ALICE-2/
+slurm_scripts/
+configs/
 
 # SLURM scripts (if you want to ignore them)
 # *.slurm
