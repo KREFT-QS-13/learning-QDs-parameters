@@ -7,7 +7,6 @@ import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 
-from gen_data_utils import QuantumDotModel, get_virtual_gate_transitions, get_coulomb_diamond_sizes
 from qdarts.experiment import Experiment
 from qdarts.plotting import plot_polytopes
 
@@ -461,9 +460,8 @@ def generate_datapoint(
     # Convert config to params
     params = config_to_params(config)
     
-    # Create output directory for this data point
+    # Don't create folder yet - only create after successful generation
     datapoint_dir = os.path.join(output_dir, f"datapoint_{datapoint_id:05d}")
-    os.makedirs(datapoint_dir, exist_ok=True)
     
     try:
         # Initialize quantum dot model
@@ -541,6 +539,9 @@ def generate_datapoint(
         
         # Store full plane axes arrays
         cuts_axes = []  # Store full plane axes arrays
+        # Store PNG data in memory first (if saving PNGs)
+        save_png_images = config.get('CSD_generation', {}).get('save_png_images', False)
+        png_figures = []  # Store figure objects if saving PNGs
         
         # Process each cut
         for cut_idx, cut_pair in enumerate(cuts):
@@ -565,24 +566,24 @@ def generate_datapoint(
                 use_sensor_signal=True,
             )
             
-            # Save PNG with cut index as filename
-            fig, ax = plt.subplots(figsize=(1.0, 1.0))
-            ax.pcolormesh(
-                1e3 * xout - 1e3 * v_offset[cut_pair[0]],
-                1e3 * yout - 1e3 * v_offset[cut_pair[1]],
-                sensor_values[:, :, 0].T,
-                cmap='viridis'
-            )
-            #plot_polytopes(ax, polytopes, axes_rescale=1e3)
-            #ax.set_xlabel(f'Gate {cut_pair[0]} Voltage (mV)')
-            #ax.set_ylabel(f'Gate {cut_pair[1]} Voltage (mV)')
-            #ax.set_title(f'Cut {cut_str}')
-            ax.set_xticks([])
-            ax.set_yticks([])
-            ax.axis('off')  # Remove axes completely
-            ax.set_position([0, 0, 1, 1])  # Make axes fill entire figure
-            plt.savefig(os.path.join(datapoint_dir, f"cut_{cut_idx}.png"), dpi=int(resolution), pad_inches=0, bbox_inches='tight')
-            plt.close()
+            # Create PNG figure in memory (don't save yet)
+            if save_png_images:
+                fig, ax = plt.subplots(figsize=(1.0, 1.0))
+                ax.pcolormesh(
+                    1e3 * xout - 1e3 * v_offset[cut_pair[0]],
+                    1e3 * yout - 1e3 * v_offset[cut_pair[1]],
+                    sensor_values[:, :, 0].T,
+                    cmap='viridis'
+                )
+                #plot_polytopes(ax, polytopes, axes_rescale=1e3)
+                #ax.set_xlabel(f'Gate {cut_pair[0]} Voltage (mV)')
+                #ax.set_ylabel(f'Gate {cut_pair[1]} Voltage (mV)')
+                #ax.set_title(f'Cut {cut_str}')
+                ax.set_xticks([])
+                ax.set_yticks([])
+                ax.axis('off')  # Remove axes completely
+                ax.set_position([0, 0, 1, 1])  # Make axes fill entire figure
+                png_figures.append((fig, cut_idx))
         
         # Store voltage parameters [x0, x1, N] for each cut
         # x_voltage and y_voltage should be (batch_size, Ncuts, 3) where 3 = [x0, x1, N]
@@ -613,6 +614,17 @@ def generate_datapoint(
             'cuts': cuts_axes_array[np.newaxis, :, :, :],  # (1, Ncuts, 2, Ng) - full plane axes arrays
         }
         
+        # Only create folder and save files after all computation is successful
+        os.makedirs(datapoint_dir, exist_ok=True)
+        
+        # Save PNG files if they were created
+        if save_png_images and png_figures:
+            for fig, cut_idx in png_figures:
+                try:
+                    plt.savefig(os.path.join(datapoint_dir, f"cut_{cut_idx}.png"), dpi=int(resolution), pad_inches=0, bbox_inches='tight')
+                finally:
+                    plt.close(fig)
+        
         # Save data as .npz file (includes cuts)
         np.savez(os.path.join(datapoint_dir, "data.npz"), **data_dict)
         
@@ -623,6 +635,13 @@ def generate_datapoint(
         print(f"Error generating datapoint {datapoint_id:05d}: {e}")
         import traceback
         traceback.print_exc()
+        # Clean up folder if it was created (shouldn't happen, but just in case)
+        if os.path.exists(datapoint_dir):
+            try:
+                import shutil
+                shutil.rmtree(datapoint_dir)
+            except:
+                pass
         return False
 
 def print_keys_in_datapoint(path_to_file: str) -> dict:
@@ -632,18 +651,146 @@ def print_keys_in_datapoint(path_to_file: str) -> dict:
     keys = list(np.load(path_to_file).keys())
     return keys
 
-def load_datapoints_under_key(path:str, number_of_realizations:int, key:str) -> dict:
+def load_all_data(path: str, folder_name: str = "datapoint", file_name: str = "data.npz") -> dict:
     """
-    Load all datapoints under a given key from a given path.
+    Load all datapoints from subfolders under the given path.
+    
+    This function searches for all folders matching the pattern (e.g., "datapoint_*")
+    and loads the data.npz file from each folder. Returns a dictionary where each key
+    corresponds to a key in the npz file, and each value is a list containing the
+    values from all loaded files.
+    
+    Parameters
+    ----------
+    path : str
+        Base path to search for datapoint folders (e.g., "datasets/sys_3_1__2")
+    folder_name : str, optional
+        Prefix of folder names to search for (default: "datapoint")
+    file_name : str, optional
+        Name of the npz file to load from each folder (default: "data.npz")
+    
+    Returns
+    -------
+    dict
+        Dictionary with the same keys as in the npz files, where each value is
+        a list of arrays/values from all loaded files.
+    
+    Example
+    -------
+    >>> data = load_all_datapoints("datasets/sys_3_1__2")
+    >>> print(data.keys())  # ['C_tilde_DD', 'C_DG', 'geometry', ...]
+    >>> print(len(data['C_tilde_DD']))  # Number of datapoints loaded
     """
-    loaded_values = []
-    for i in range(number_of_realizations):
-        datapoint_dir = os.path.join(path, f"datapoint_{i:05d}")
-        datapoint = np.load(os.path.join(datapoint_dir, "data.npz"))
-        loaded_values.append(datapoint[key])
-    return loaded_values
+    # Find all folders matching the pattern
+    datapoint_folders = []
+    missing_folders = []
+    failed_folders = []
+    total_folders = 0
+    
+    for item in os.listdir(path):
+        item_path = os.path.join(path, item)
+        if os.path.isdir(item_path) and item.startswith(folder_name):
+            total_folders += 1
+            npz_path = os.path.join(item_path, file_name)
+            if os.path.exists(npz_path):
+                datapoint_folders.append(npz_path)
+            else:
+                missing_folders.append(item_path)
+    
+    if not datapoint_folders:
+        raise ValueError(f"No datapoint folders with {file_name} found in {path}")
+    
+    # Report missing folders if any
+    if missing_folders:
+        print(f"Warning: {len(missing_folders)} datapoint folder(s) are missing {file_name}:")
+        for missing_folder in sorted(missing_folders)[:10]:  # Show first 10
+            try:
+                folder_contents = os.listdir(missing_folder)
+                if folder_contents:
+                    print(f"  - {os.path.basename(missing_folder)}: contains {folder_contents}")
+                else:
+                    print(f"  - {os.path.basename(missing_folder)}: empty folder")
+            except Exception as e:
+                print(f"  - {os.path.basename(missing_folder)}: error accessing folder ({e})")
+        if len(missing_folders) > 10:
+            print(f"  ... and {len(missing_folders) - 10} more")
+        print(f"Total folders found: {total_folders}, folders with {file_name}: {len(datapoint_folders)}, missing: {len(missing_folders)}")
+    
+    # Sort folders to ensure consistent ordering
+    datapoint_folders.sort()
+    # Load first file to get the keys
+    first_data = np.load(datapoint_folders[0])
+    keys = list(first_data.keys())
+    
+    # Initialize dictionary with empty lists for each key
+    result_dict = {key: [] for key in keys}
+    
+    # Load all files and collect values with error handling
+    for npz_path in datapoint_folders:
+        try:
+            data = np.load(npz_path)
+            for key in keys:
+                if key not in data:
+                    raise KeyError(f"Key '{key}' not found in {npz_path}")
+                result_dict[key].append(data[key])
+        except Exception as e:
+            failed_folders.append((npz_path, str(e)))
+            print(f"Warning: Failed to load {npz_path}: {e}")
+    
+    # Report summary
+    print(f"Loading {len(datapoint_folders)} datapoints from {path}.")
+    if len(datapoint_folders) > 0:
+        print(f"First file: {datapoint_folders[0]}, Last file: {datapoint_folders[-1]}")
+    if failed_folders:
+        print(f"Warning: {len(failed_folders)} file(s) failed to load. Successfully loaded: {len(result_dict[keys[0]])} datapoints")
+    
+    return result_dict, missing_folders, failed_folders
+
+def load_all_imgs_with_name(
+    path: str,
+    folder_name: str = "datapoint",
+    img_name: str = "cut_0.png",
+    as_tensor: bool = True
+) -> list:
+    """
+    Loads all image files (e.g., "cut_0.png") found under datapoint folders inside a given path.
+    Returns a list of image matrices suitable for use with PyTorch (i.e., torch.FloatTensor with shape [C, H, W]).
+
+    Parameters
+    ----------
+    path : str
+        Base path to search for datapoint folders.
+    folder_name : str, optional
+        Prefix of folder names to search for (default: "datapoint").
+    img_name : str, optional
+        Name of the image file to load from each folder (default: "cut_0.png").
+    as_tensor : bool, optional
+        Whether to return torch.FloatTensor objects (default: True). If False, returns numpy arrays.
+
+    Returns
+    -------
+    list
+        List of images as torch.FloatTensor (C, H, W), normalized to [0, 1], ready for CNN input.
+    """
+    img_list = []
+    # Transform to grayscale and to tensor (C=1, H, W), normalize to [0,1]
+    img_transform = transforms.Compose([
+        transforms.Grayscale(num_output_channels=1),  # Convert to 1 channel
+        transforms.ToTensor(),  # Converts to [C, H, W] and scales to [0, 1]
+    ])
+    for item in os.listdir(path):
+        item_path = os.path.join(path, item)
+        if os.path.isdir(item_path) and item.startswith(folder_name):
+            img_path = os.path.join(item_path, img_name)
+            if os.path.exists(img_path):
+                img = Image.open(img_path)
+                img_tensor = img_transform(img)  # (1, H, W) FloatTensor in [0,1], single channel
+                if as_tensor:
+                    img_list.append(img_tensor)
+                else:
+                    img_list.append(img_tensor.squeeze(0).numpy())  # Remove channel dim for np, shape (H, W)
+    return img_list
 
 
-
-def preprocess_datapoint(datapoint_dir: str) -> dict:
+def preprocess_datapoint() -> dict:
     pass

@@ -37,12 +37,24 @@ def main():
     print(f"Starting generation of {Number_of_realizations} realizations...")
 
     start_time = time.time()
+    successful_count = 0
+    failed_count = 0
+    
     for i in range(Number_of_realizations):
         print(f"Generating realization {i+1}/{Number_of_realizations}...")
-        u.generate_datapoint(config, i, os.path.join(path_to_end_folder, folder_name))
+        success = u.generate_datapoint(config, successful_count, os.path.join(path_to_end_folder, folder_name))
+        if success:
+            successful_count += 1
+        else:
+            failed_count += 1
+            print(f"Failed to generate datapoint. Retrying with next index...")
+    
     end_time = time.time()
     print(f"\nGeneration complete!")
-    print(f"Time taken: {end_time - start_time:.2f} seconds. On average, {(end_time - start_time)/Number_of_realizations:.2f} seconds per realization.")
+    print(f"Successfully generated: {successful_count} datapoints")
+    print(f"Successful/Failed ratio: {successful_count}/{failed_count}")
+    print(f"Time taken: {end_time - start_time:.2f} seconds.")
+    print(f"Average time per datapoint: {(end_time - start_time)/(successful_count + failed_count):.2f} seconds.")
 
 if __name__ == "__main__":
     main()
