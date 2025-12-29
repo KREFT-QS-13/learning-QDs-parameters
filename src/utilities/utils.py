@@ -623,7 +623,7 @@ def generate_datapoint(
         if save_png_images and png_figures:
             for fig, cut_idx in png_figures:
                 try:
-                    plt.savefig(os.path.join(datapoint_dir, f"cut_{cut_idx}.png"), dpi=int(resolution), pad_inches=0, bbox_inches='tight')
+                    fig.savefig(os.path.join(datapoint_dir, f"cut_{cut_idx}.png"), dpi=int(resolution), pad_inches=0, bbox_inches='tight')
                 finally:
                     plt.close(fig)
         
@@ -653,7 +653,7 @@ def print_keys_in_datapoint(path_to_file: str) -> dict:
     keys = list(np.load(path_to_file).keys())
     return keys
 
-def load_all_data(path: str, folder_name: str = "datapoint", file_name: str = "data.npz") -> dict:
+def load_all_data(path: str, load_images: bool = False, folder_name: str = "datapoint", file_name: str = "data.npz"):
     """
     Load all datapoints from subfolders under the given path.
     
@@ -676,12 +676,6 @@ def load_all_data(path: str, folder_name: str = "datapoint", file_name: str = "d
     dict
         Dictionary with the same keys as in the npz files, where each value is
         a list of arrays/values from all loaded files.
-    
-    Example
-    -------
-    >>> data = load_all_datapoints("datasets/sys_3_1__2")
-    >>> print(data.keys())  # ['C_tilde_DD', 'C_DG', 'geometry', ...]
-    >>> print(len(data['C_tilde_DD']))  # Number of datapoints loaded
     """
     # Find all folders matching the pattern
     datapoint_folders = []
@@ -726,6 +720,7 @@ def load_all_data(path: str, folder_name: str = "datapoint", file_name: str = "d
     
     # Initialize dictionary with empty lists for each key
     result_dict = {key: [] for key in keys}
+    images = []
     
     # Load all files and collect values with error handling
     for npz_path in datapoint_folders:
@@ -738,6 +733,22 @@ def load_all_data(path: str, folder_name: str = "datapoint", file_name: str = "d
         except Exception as e:
             failed_folders.append((npz_path, str(e)))
             print(f"Warning: Failed to load {npz_path}: {e}")
+
+
+        if load_images:
+            folder_path = "/".join(npz_path.split("/")[:-1])
+            try:
+                num_cuts = np.array(data['cuts'][0]).squeeze().shape[0]
+                trio = []
+                for cut_idx in range(num_cuts):
+                    img_path = os.path.join(folder_path, f"cut_{cut_idx}.png")
+                    img = Image.open(img_path)
+                    img_tensor = img_to_transform_tensor(img)  # (1, H, W) FloatTensor in [0,1], single channel
+                    trio.append(img_tensor)
+                images.append(trio)
+            except Exception as e:
+                failed_folders.append((npz_path, str(e)))
+                print(f"Warning: Failed to load images from {npz_path}: {e}")
     
     # Report summary
     print(f"Loading {len(datapoint_folders)} datapoints from {path}.")
@@ -746,53 +757,73 @@ def load_all_data(path: str, folder_name: str = "datapoint", file_name: str = "d
     if failed_folders:
         print(f"Warning: {len(failed_folders)} file(s) failed to load. Successfully loaded: {len(result_dict[keys[0]])} datapoints")
     
-    return result_dict, missing_folders, failed_folders
+    return result_dict, images, missing_folders, failed_folders
 
-def load_all_imgs_with_name(
-    path: str,
-    folder_name: str = "datapoint",
-    img_name: str = "cut_0.png",
-    as_tensor: bool = True
-) -> list:
+def img_to_transform_tensor(img: np.ndarray) -> torch.Tensor:
     """
-    Loads all image files (e.g., "cut_0.png") found under datapoint folders inside a given path.
-    Returns a list of image matrices suitable for use with PyTorch (i.e., torch.FloatTensor with shape [C, H, W]).
+    Apply the standard preprocessing (grayscale + ToTensor) to a given image.
 
     Parameters
     ----------
-    path : str
-        Base path to search for datapoint folders.
-    folder_name : str, optional
-        Prefix of folder names to search for (default: "datapoint").
-    img_name : str, optional
-        Name of the image file to load from each folder (default: "cut_0.png").
+    img :
+        Input image. Can be a PIL.Image.Image or a NumPy array with shape (H, W) or (H, W, C).
     as_tensor : bool, optional
-        Whether to return torch.FloatTensor objects (default: True). If False, returns numpy arrays.
+        Whether to return a torch.FloatTensor (default: True). If False, returns a numpy array.
 
     Returns
     -------
-    list
-        List of images as torch.FloatTensor (C, H, W), normalized to [0, 1], ready for CNN input.
+    torch.Tensor or np.ndarray
+        If as_tensor=True: torch.FloatTensor (C, H, W), normalized to [0, 1].
+        If as_tensor=False: numpy array (H, W), normalized to [0, 1].
     """
-    img_list = []
-    # Transform to grayscale and to tensor (C=1, H, W), normalize to [0,1]
+    # Ensure we have a PIL image
+    if isinstance(img, np.ndarray):
+        img = Image.fromarray(img)
+
     img_transform = transforms.Compose([
         transforms.Grayscale(num_output_channels=1),  # Convert to 1 channel
-        transforms.ToTensor(),  # Converts to [C, H, W] and scales to [0, 1]
+        transforms.ToTensor(),                        # -> [C, H, W] in [0, 1]
     ])
-    for item in os.listdir(path):
-        item_path = os.path.join(path, item)
-        if os.path.isdir(item_path) and item.startswith(folder_name):
-            img_path = os.path.join(item_path, img_name)
-            if os.path.exists(img_path):
-                img = Image.open(img_path)
-                img_tensor = img_transform(img)  # (1, H, W) FloatTensor in [0,1], single channel
-                if as_tensor:
-                    img_list.append(img_tensor)
-                else:
-                    img_list.append(img_tensor.squeeze(0).numpy())  # Remove channel dim for np, shape (H, W)
-    return img_list
+
+    img_tensor = img_transform(img)  # (1, H, W) FloatTensor in [0,1], single channel
+
+    return img_tensor
+
+def visualize_image(img: torch.Tensor) -> None:
+    img_np = img.squeeze(0).cpu().numpy()   # remove channel dim
+
+    plt.imshow(img_np, cmap="gray")
+    plt.axis("off")
+    plt.show()
 
 
-def preprocess_datapoint() -> dict:
-    pass
+def create_context(data: dict) -> list:
+    # shape: (num_realizations, num_cuts, 9), 9 = [v_off, x_volts, y_volts]
+    context = []
+
+    for v_off, x_volts, y_volts, cuts in zip(data['v_offset'], data['x_voltage'], data['y_voltage'], data['cuts']):
+        v_off = v_off.squeeze()[:-1]
+        y_volts = y_volts.squeeze()
+        x_volts = x_volts.squeeze()
+        cuts = cuts.squeeze()
+
+        inner_list = [] # contain 3 lists: v_off, x_volts_cut_i, y_volts_cut_i
+        for cut in range(x_volts.shape[0]):
+                inner_list.append(np.concatenate([v_off, x_volts[cut], y_volts[cut], cuts[cut]], axis=None))
+                
+        context.append(inner_list)
+    
+    return context
+
+def create_outputs(data: dict) -> list:
+    '''
+    Function to create the outputs for the model. 
+    As the multiplication of inverse of lever arm matrix and the interaction matrix
+
+    '''
+    alpha = data['alpha']
+    e_c = data['E_c']
+
+    outputs = [np.matmul( np.linalg.inv(alpha), e_c).squeeze()[:-1, :-1] for alpha, e_c in zip(alpha, e_c)]
+    return outputs
+
