@@ -1,11 +1,37 @@
 import torch
 import torch.nn as nn
 from torchvision import models
-import utilities.config as c
 
-from models.transfer_CNN import ResNet
+from models.img_encoder import CNN, ResNet
 
-class PMAAttention(nn.Module):
+class SimplePoolingAttention(nn.Module):
+    """
+    Simple Pooling Attention (SPA) module.
+
+    This module applies a simple pooling operation to the input features. 
+    Args:
+        emb_dim (int): Dimension of the input features
+        hidden_dim (int): Dimension of the hidden layer
+    """
+    def __init__(self, emb_dim, hidden_dim=128):
+        super().__init__()
+
+        output_size = 9
+
+        self.score = nn.Sequential(
+            nn.Linear(emb_dim, hidden_dim),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, output_size)
+        )
+
+    def forward(self, x):
+        scores = self.score(x).squeeze(-1)
+        weights = torch.softmax(scores, dim=1)
+        pooled = (weights.unsqueeze(-1) * x).sum(dim=1)
+        
+        return pooled, weights
+
+class PoolingByMultiHeadAttention(nn.Module):
     def __init__(self, input_dim, num_heads=4, dropout=0.1):
         """
         Pooling-by-Multi-Head-Attention (PMA) module.
@@ -89,46 +115,50 @@ class PMAAttention(nn.Module):
             return output, attn_weights
         return output
 
-
-class MultiBranchCNN(nn.Module):
-    def __init__(self, config_tuple, num_branches=4, name="multibranch_model", base_model='resnet18', 
-                 pretrained=True, dropout:float=0.5, custom_head:list=None, 
-                 filters_per_layer:list=[16,32,64,128], num_attention_heads=4,
-                 prediction_head:list=None):
-        super(MultiBranchCNN, self).__init__()
+class MultiBranchArchitecture(nn.Module):
+    def __init__(self, num_branches=3, name="MBArch", branch_model='resnet18', custom_cnn_layers:list=None, pretrained=True, 
+                 filters_per_layer:list=[16,32,64,128], dropout:float=0.5, branch_predicition_head:list=None, context_vector_size=17,
+                 pooling_method='spa', num_attention_heads=4, final_prediction_head:list=None, output_size=9):
+        super(MultiBranchArchitecture, self).__init__()
         self.name = name
         self.num_branches = num_branches
+
+        if 'cnn' in branch_model.lower():
+            if custom_cnn_layers is None:
+                raise ValueError(f"custom_cnn_layers is required when using CNN (branch_model='{branch_model}')")
+            if not isinstance(custom_cnn_layers, list) or len(custom_cnn_layers) == 0:
+                raise ValueError("custom_cnn_layers must be a non-empty list of tuples")
+        elif 'resnet' not in branch_model.lower() and 'cnn' not in branch_model.lower():
+            raise ValueError(f"Unsupported branch_model: {branch_model}. Use 'resnet<num_layers>' or 'cnn'")
         
-        # Create multiple ResNet branches
         self.branches = nn.ModuleList([
-            ResNet(config_tuple, name=f"branch_{i}", base_model=base_model, 
-                  pretrained=pretrained, dropout=dropout, 
-                  custom_head=custom_head, filters_per_layer=filters_per_layer)
-            for i in range(num_branches)
-        ])
+                CNN(name=f"branch_{i}", 
+                          dropout=dropout, 
+                          custom_prediction_head=branch_predicition_head,
+                          context_vector_size=context_vector_size,
+                          custom_cnn_layers=custom_cnn_layers
+                          ) for i in range(num_branches)
+                ])
+      
         
         # Get the output features from the first branch to set up attention
-        branch_output_dim = self.branches[0].custom_head[-1].out_features
+        branch_output_dim = self.branches[0].custom_prediction_head[-1].out_features
         
         # PMA attention module to combine features from different branches
-        self.attention = PMAAttention(branch_output_dim, num_heads=num_attention_heads, dropout=dropout)
+        if pooling_method == 'spa':
+            self.attention = SimplePoolingAttention(branch_output_dim)
+        elif pooling_method == 'pma':
+            self.attention = PoolingByMultiHeadAttention(branch_output_dim, num_heads=num_attention_heads, dropout=dropout)
+        else:
+            raise ValueError(f'Unsupported pooling method: {pooling_method}. Please use:\n - spa for Simple Pooling Attention\n - pma for Pooling by Multi-Head Attention')
         
         # Final prediction head
-        K, N, S = config_tuple
-        if c.MODE == 1:
-            output_size = K * (K + 1) // 2 + K**2
-        elif c.MODE == 2:
-            output_size = 2*K
-        elif c.MODE == 3:
-            output_size = K
-        
-
-        if prediction_head is not None:
+        if final_prediction_head is not None:
             layers = []
             in_features = branch_output_dim
             
             # Build layers based on the provided list
-            for out_features in prediction_head[:-1]:  # All layers except the last one
+            for out_features in final_prediction_head[:-1]:  # All layers except the last one
                 layers.extend([
                     nn.Linear(in_features, out_features),
                     nn.ReLU(inplace=True),
@@ -143,7 +173,7 @@ class MultiBranchCNN(nn.Module):
         else:
             # Default architecture if no custom_head is provided
             self.prediction_head = nn.Sequential(
-                nn.Linear(num_features, 512),
+                nn.Linear(branch_output_dim, 512), # Q: Should branch output be the same as the output size of the final prediction head after pooling block?
                 nn.ReLU(inplace=True),
                 nn.Dropout(dropout),
                 nn.Linear(512, 256),
@@ -152,12 +182,13 @@ class MultiBranchCNN(nn.Module):
                 nn.Linear(256, output_size)
             )
 
-    def forward(self, x, return_attention=False):
+    def forward(self, x, context_vector, return_attention=False):
         """
         Forward pass of the multi-branch CNN.
         
         Args:
             x (torch.Tensor): Input tensor of shape (batch_size, num_branches, channels, height, width)
+            context_vector (torch.Tensor): Context vector tensor of shape (batch_size, context_vector_size)
             return_attention (bool): Whether to return attention weights
             
         Returns:
@@ -169,12 +200,13 @@ class MultiBranchCNN(nn.Module):
         # Verify input shape matches number of branches
         if x.size(1) != self.num_branches:
             raise ValueError(f"Input tensor has {x.size(1)} branches but model expects {self.num_branches} branches")
-        
+                
         # Process each branch
         branch_outputs = []
         for i in range(self.num_branches):
             branch_input = x[:, i]  # Select the i-th image for this branch
-            branch_output = self.branches[i](branch_input)
+            context_vector_input = context_vector[:, i]
+            branch_output = self.branches[i](branch_input, context_vector_input)
             branch_outputs.append(branch_output)
         
         # Stack branch outputs
