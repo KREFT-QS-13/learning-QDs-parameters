@@ -666,6 +666,9 @@ def load_all_data(path: str, load_images: bool = False, folder_name: str = "data
     ----------
     path : str
         Base path to search for datapoint folders (e.g., "datasets/sys_3_1__2")
+    load_images : bool, optional
+        If True, loads images and returns them as a torch.Tensor of shape (N, num_branches, 1, H, W)
+        If False, returns images as an empty list
     folder_name : str, optional
         Prefix of folder names to search for (default: "datapoint")
     file_name : str, optional
@@ -676,6 +679,13 @@ def load_all_data(path: str, load_images: bool = False, folder_name: str = "data
     dict
         Dictionary with the same keys as in the npz files, where each value is
         a list of arrays/values from all loaded files.
+    images : torch.Tensor or list
+        If load_images=True: torch.Tensor of shape (N, num_branches, 1, H, W) containing all images
+        If load_images=False: empty list
+    missing_folders : list
+        List of folders that were found but missing the data file
+    failed_folders : list
+        List of tuples (folder_path, error_message) for folders that failed to load
     """
     # Find all folders matching the pattern
     datapoint_folders = []
@@ -757,6 +767,17 @@ def load_all_data(path: str, load_images: bool = False, folder_name: str = "data
     if failed_folders:
         print(f"Warning: {len(failed_folders)} file(s) failed to load. Successfully loaded: {len(result_dict[keys[0]])} datapoints")
     
+    # Convert images from list of lists to tensor if load_images is True
+    if load_images and images:
+        # Convert imgs: list of lists of tensors -> tensor of shape (N, num_branches, 1, H, W)
+        img_tensors = []
+        for datapoint_imgs in images:
+            # Stack the num_branches images for this datapoint: (num_branches, 1, H, W)
+            stacked = torch.stack(datapoint_imgs, dim=0)
+            img_tensors.append(stacked)
+        images_tensor = torch.stack(img_tensors, dim=0)  # (N, num_branches, 1, H, W)
+        return result_dict, images_tensor, missing_folders, failed_folders
+    
     return result_dict, images, missing_folders, failed_folders
 
 def img_to_transform_tensor(img: np.ndarray) -> torch.Tensor:
@@ -797,7 +818,17 @@ def visualize_image(img: torch.Tensor) -> None:
     plt.show()
 
 
-def create_context(data: dict) -> list:
+def create_context(data: dict) -> torch.Tensor:
+    """
+    Create context vectors as torch tensors.
+    
+    Args:
+        data: Dictionary containing 'v_offset', 'x_voltage', 'y_voltage', 'cuts'
+    
+    Returns:
+        torch.Tensor of shape (N, context_vector_size) - context vectors
+        Takes the first context vector from each datapoint (assuming same context for all branches)
+    """    
     # shape: (num_realizations, num_cuts, 9), 9 = [v_off, x_volts, y_volts]
     context = []
 
@@ -813,17 +844,37 @@ def create_context(data: dict) -> list:
                 
         context.append(inner_list)
     
-    return context
+    # Take the first context vector from each datapoint (assuming same context for all branches)
+    context_list = [ctx[0] for ctx in context]  # Take first context vector per datapoint
+    context_tensor = torch.FloatTensor(np.array(context_list))  # (N, context_vector_size)
+    
+    return context_tensor
 
-def create_outputs(data: dict) -> list:
+def create_outputs(data: dict) -> torch.Tensor:
     '''
-    Function to create the outputs for the model. 
+    Function to create the outputs for the model as torch tensors.
     As the multiplication of inverse of lever arm matrix and the interaction matrix
+    
+    Args:
+        data: Dictionary containing 'alpha' and 'E_c'
+    
+    Returns:
+        torch.Tensor of shape (N, output_size) - flattened output matrices
 
     '''
     alpha = data['alpha']
     e_c = data['E_c']
 
     outputs = [np.matmul( np.linalg.inv(alpha), e_c).squeeze()[:-1, :-1] for alpha, e_c in zip(alpha, e_c)]
-    return outputs
+    
+    # Flatten each output if it's 2D and convert to torch tensor
+    outputs_list = []
+    for out in outputs:
+        if isinstance(out, np.ndarray):
+            outputs_list.append(out.flatten())
+        else:
+            outputs_list.append(np.array(out).flatten())
+    outputs_tensor = torch.FloatTensor(np.array(outputs_list))  # (N, output_size)
+    
+    return outputs_tensor
 

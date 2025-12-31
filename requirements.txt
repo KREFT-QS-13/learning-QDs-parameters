@@ -48,12 +48,14 @@ pyparsing==3.2.5
 python-dateutil==2.9.0.post0
 pytz==2025.2
 pyzmq==27.1.0
+scikit-learn==1.8.0
 scipy==1.16.3
 scs==3.2.9
 setuptools==80.9.0
 six==1.17.0
 stack-data==0.6.3
 sympy==1.14.0
+threadpoolctl==3.6.0
 torch==2.9.1
 torchaudio==2.9.1
 torchvision==0.24.1

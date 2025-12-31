@@ -1,0 +1,155 @@
+import argparse
+import torch
+import numpy as np
+import time
+import json
+
+import src.utilities.model_utils as mu
+import src.utilities.utils as u
+from src.models.multi_branch import MultiBranchArchitecture
+
+def tsem(model_config_path:str, num_dps:int=None):
+    '''
+    Train and evaluate models on the given dataset.
+    Args:
+        model_config_path: Path to the model configuration file.
+        num_dps: Number of datapoints to use. If -1, use all datapoints.
+    '''
+
+    # Load configuration from JSON file
+    try:
+        with open(model_config_path, 'r') as f:
+            confs = json.load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Configuration file not found: {model_config_path}")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in configuration file {model_config_path}: {e}")
+    except Exception as e:
+        raise RuntimeError(f"Error loading configuration file {model_config_path}: {e}")
+    
+    # Extract paths
+    if 'paths' not in confs:
+        raise KeyError("'paths' key not found in configuration file")
+    dataset_path = confs['paths']['dataset_path']
+    main_dir_results = confs['paths']['main_dir_results']
+    
+    print(f"Loading dataset from {dataset_path}...")
+    data, imgs, _, _ = u.load_all_data(dataset_path, load_images=True) # imgs already preprocessed
+    context = u.create_context(data)
+    outputs = u.create_outputs(data)
+
+    if num_dps is not None and num_dps>0 and num_dps<=len(context):
+        context = context[:num_dps]
+        outputs = outputs[:num_dps]
+        imgs = imgs[:num_dps]
+        print(f"Data loaded. Using {num_dps} datapoints from {dataset_path}.")
+    elif num_dps is None:
+        print(f"Data loaded. Using all {len(context)} datapoints from {dataset_path}.")
+    else:
+        raise ValueError(f"Number of datapoints to use must be between 0 and {len(context)}. Got {num_dps}.")
+    
+    # TODO prepare to be passed to the model in 
+
+    # High level model configuration
+    model_name = confs['model']['name']
+    branch_model = confs['model']['params']['branch_model']
+    pooling_method = confs['model']['params']['pooling_method']
+    num_branches = confs['model']['params']['num_branches']
+    print(f"Tranining model {model_name} with {num_branches} branches each with{branch_model} as img encoder and {pooling_method} branches pooling method.")
+
+    # Check available devices and print type and device name
+    if torch.cuda.is_available():
+        num_devices = torch.cuda.device_count()
+        print(f"CUDA is available. Number of GPU devices: {num_devices}")
+        for i in range(num_devices):
+            device_name = torch.cuda.get_device_name(i)
+            print(f"GPU device {i}: {device_name}")
+        print(f"Using device: cuda:0 ({torch.cuda.get_device_name(0)})")
+    else:
+        print(f"CUDA is not available. Using CPU.")
+        print(f"Device: cpu")
+    
+    # the rest of the model configuration
+    custom_cnn_layers = confs['model']['params']['custom_cnn_layers']
+    pretrained = confs['model']['params']['pretrained']
+    filters_per_layer = confs['model']['params']['filters_per_layer']
+    dropout = confs['model']['params']['dropout']
+    branch_predicition_head = confs['model']['params']['branch_predicition_head']
+    context_vector_size = confs['model']['params']['context_vector_size']
+    num_attention_heads = confs['model']['params']['num_attention_heads']
+    final_prediction_head = confs['model']['params']['final_prediction_head']
+    output_size = confs['model']['params']['output_size']
+
+    model = MultiBranchArchitecture(name=model_name,
+                                    branch_model=branch_model,
+                                    pooling_method=pooling_method,
+                                    num_branches=num_branches,
+                                    custom_cnn_layers=custom_cnn_layers,
+                                    pretrained=pretrained,
+                                    filters_per_layer=filters_per_layer,
+                                    dropout=dropout,
+                                    branch_predicition_head=branch_predicition_head,
+                                    context_vector_size=context_vector_size,
+                                    num_attention_heads=num_attention_heads,
+                                    final_prediction_head=final_prediction_head,
+                                    output_size=output_size)
+    
+    print(f"""Detailed model parameters: 
+    - name: {model_name}
+    - branch_model: {branch_model}
+    - pooling_method: {pooling_method}
+    - num_branches: {num_branches}
+    - custom_cnn_layers: {custom_cnn_layers}
+    - pretrained: {pretrained}
+    - filters_per_layer: {filters_per_layer}
+    - dropout: {dropout}
+    - branch_predicition_head: {branch_predicition_head}
+    - context_vector_size: {context_vector_size}
+    - num_attention_heads: {num_attention_heads}
+    - final_prediction_head: {final_prediction_head}
+    - output_size: {output_size}""")
+
+    
+    batch_size = confs['train']['batch_size']
+    epochs = confs['train']['epochs']
+    learning_rate = confs['train']['learning_rate']
+    val_split = confs['train']['val_split']
+    test_split = confs['train']['test_split']
+    random_state = confs['train']['random_state']
+    epsilon = confs['train']['epsilon']
+    regularization_coeff = confs['train']['regularization_coeff']
+
+    # Determine device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+
+    results = mu.train_evaluate_and_save_models(
+        model=model,
+        imgs=imgs,
+        context=context,
+        outputs=outputs,
+        save_dir=main_dir_results,
+        batch_size=batch_size,
+        epochs=epochs,
+        learning_rate=learning_rate,
+        val_split=val_split,
+        test_split=test_split,
+        random_state=random_state,
+        epsilon=epsilon,
+        regularization_coeff=regularization_coeff
+    )
+
+    print("Training, evaluation, and saving complete!")
+
+def main():
+    parser = argparse.ArgumentParser(description="Train and evaluate models")
+    parser.add_argument('-c', type=str, required=False, default='configs/model/model_config.json',   
+                        help='Path to the configuration file to the whole process of training, evaluating and saving the model. Mandatory. Format: json.')
+    parser.add_argument('-n', type=int, required=False, default=None, 
+                        help='Number of datapoints to use. If None, use all datapoints.')
+    
+    args = parser.parse_args()
+    tsem(args.c, args.n)
+
+if __name__ == "__main__":
+    main()

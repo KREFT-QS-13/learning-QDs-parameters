@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torchvision import models
 
-from models.img_encoder import CNN, ResNet
+from src.models.img_encoder import CNN, ResNet
 
 class SimplePoolingAttention(nn.Module):
     """
@@ -16,20 +16,20 @@ class SimplePoolingAttention(nn.Module):
     def __init__(self, emb_dim, hidden_dim=128):
         super().__init__()
 
-        output_size = 9
-
         self.score = nn.Sequential(
             nn.Linear(emb_dim, hidden_dim),
             nn.Tanh(),
-            nn.Linear(hidden_dim, output_size)
+            nn.Linear(hidden_dim, 1)
         )
 
-    def forward(self, x):
+    def forward(self, x, return_weights=False):
         scores = self.score(x).squeeze(-1)
         weights = torch.softmax(scores, dim=1)
         pooled = (weights.unsqueeze(-1) * x).sum(dim=1)
         
-        return pooled, weights
+        if return_weights:
+            return pooled, weights
+        return pooled
 
 class PoolingByMultiHeadAttention(nn.Module):
     def __init__(self, input_dim, num_heads=4, dropout=0.1):
@@ -123,23 +123,40 @@ class MultiBranchArchitecture(nn.Module):
         self.name = name
         self.num_branches = num_branches
 
+        # Validate and create branches based on branch_model type
         if 'cnn' in branch_model.lower():
+            # CNN requires custom_cnn_layers
             if custom_cnn_layers is None:
                 raise ValueError(f"custom_cnn_layers is required when using CNN (branch_model='{branch_model}')")
             if not isinstance(custom_cnn_layers, list) or len(custom_cnn_layers) == 0:
                 raise ValueError("custom_cnn_layers must be a non-empty list of tuples")
-        elif 'resnet' not in branch_model.lower() and 'cnn' not in branch_model.lower():
-            raise ValueError(f"Unsupported branch_model: {branch_model}. Use 'resnet<num_layers>' or 'cnn'")
-        
-        self.branches = nn.ModuleList([
+            
+            # Create CNN branches
+            self.branches = nn.ModuleList([
                 CNN(name=f"branch_{i}", 
-                          dropout=dropout, 
-                          custom_prediction_head=branch_predicition_head,
-                          context_vector_size=context_vector_size,
-                          custom_cnn_layers=custom_cnn_layers
-                          ) for i in range(num_branches)
+                    dropout=dropout, 
+                    custom_cnn_layers=custom_cnn_layers,
+                    custom_prediction_head=branch_predicition_head,
+                    context_vector_size=context_vector_size,
+                    output_size=output_size
+                    ) for i in range(num_branches)
                 ])
-      
+        elif 'resnet' in branch_model.lower():
+            # ResNet requires base_model, pretrained, and filters_per_layer
+            # Create ResNet branches
+            self.branches = nn.ModuleList([
+                ResNet(name=f"branch_{i}", 
+                       base_model=branch_model,
+                       pretrained=pretrained,
+                       dropout=dropout, 
+                       custom_prediction_head=branch_predicition_head,
+                       filters_per_layer=filters_per_layer,
+                       context_vector_size=context_vector_size,
+                       output_size=output_size
+                       ) for i in range(num_branches)
+                ])
+        else:
+            raise ValueError(f"Unsupported branch_model: {branch_model}. Use 'resnet<num_layers>' (e.g., 'resnet18', 'resnet34') or 'cnn'")
         
         # Get the output features from the first branch to set up attention
         branch_output_dim = self.branches[0].custom_prediction_head[-1].out_features
