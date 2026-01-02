@@ -743,10 +743,10 @@ def load_all_data(path: str, load_images: bool = False, folder_name: str = "data
         except Exception as e:
             failed_folders.append((npz_path, str(e)))
             print(f"Warning: Failed to load {npz_path}: {e}")
-
+            continue
 
         if load_images:
-            folder_path = "/".join(npz_path.split("/")[:-1])
+            folder_path = os.path.dirname(npz_path)  # Use os.path.dirname for cross-platform compatibility
             try:
                 num_cuts = np.array(data['cuts'][0]).squeeze().shape[0]
                 trio = []
@@ -757,6 +757,8 @@ def load_all_data(path: str, load_images: bool = False, folder_name: str = "data
                     trio.append(img_tensor)
                 images.append(trio)
             except Exception as e:
+                for key in keys:
+                    result_dict[key].pop()  # Remove the last added item    
                 failed_folders.append((npz_path, str(e)))
                 print(f"Warning: Failed to load images from {npz_path}: {e}")
     
@@ -769,6 +771,7 @@ def load_all_data(path: str, load_images: bool = False, folder_name: str = "data
     
     # Convert images from list of lists to tensor if load_images is True
     if load_images and images:
+        print(f"Starting to load and preprocess images...")
         # Convert imgs: list of lists of tensors -> tensor of shape (N, num_branches, 1, H, W)
         img_tensors = []
         for datapoint_imgs in images:
@@ -778,6 +781,17 @@ def load_all_data(path: str, load_images: bool = False, folder_name: str = "data
         images_tensor = torch.stack(img_tensors, dim=0)  # (N, num_branches, 1, H, W)
         return result_dict, images_tensor, missing_folders, failed_folders
     
+   
+    # Validation before returning
+    if load_images and images:
+        # Validate alignment
+        num_data_points = len(result_dict[keys[0]])
+        num_images = len(images)
+        if num_data_points != num_images:
+            raise ValueError(
+                f"Data/Image mismatch: {num_data_points} data points but {num_images} image sets. "
+                f"This indicates some datapoints failed to load images. Please check failed_folders."
+            )
     return result_dict, images, missing_folders, failed_folders
 
 def img_to_transform_tensor(img: np.ndarray) -> torch.Tensor:
@@ -877,4 +891,17 @@ def create_outputs(data: dict) -> torch.Tensor:
     outputs_tensor = torch.FloatTensor(np.array(outputs_list))  # (N, output_size)
     
     return outputs_tensor
+
+
+def ensure_dir_exists(directory: str) -> None:
+    """
+    Ensure that a directory exists, creating it if necessary.
+    
+    Parameters
+    ----------
+    directory : str
+        Path to the directory to ensure exists
+    """
+    if directory:  # Only create if directory path is not empty
+        os.makedirs(directory, exist_ok=True)
 

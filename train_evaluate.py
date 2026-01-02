@@ -37,6 +37,7 @@ def tsem(model_config_path:str, num_dps:int=None):
     data, imgs, _, _ = u.load_all_data(dataset_path, load_images=True) # imgs already preprocessed
     context = u.create_context(data)
     outputs = u.create_outputs(data)
+    assert len(imgs) == len(context) == len(outputs), "Data alignment error: imgs={len(imgs)}, context={len(context)}, outputs={len(outputs)}"
 
     if num_dps is not None and num_dps>0 and num_dps<=len(context):
         context = context[:num_dps]
@@ -77,6 +78,7 @@ def tsem(model_config_path:str, num_dps:int=None):
     branch_predicition_head = confs['model']['params']['branch_predicition_head']
     context_vector_size = confs['model']['params']['context_vector_size']
     num_attention_heads = confs['model']['params']['num_attention_heads']
+    branch_output_dim = confs['model']['params']['branch_output_dim']
     final_prediction_head = confs['model']['params']['final_prediction_head']
     output_size = confs['model']['params']['output_size']
 
@@ -91,6 +93,7 @@ def tsem(model_config_path:str, num_dps:int=None):
                                     branch_predicition_head=branch_predicition_head,
                                     context_vector_size=context_vector_size,
                                     num_attention_heads=num_attention_heads,
+                                    branch_output_dim=branch_output_dim,
                                     final_prediction_head=final_prediction_head,
                                     output_size=output_size)
     
@@ -106,9 +109,35 @@ def tsem(model_config_path:str, num_dps:int=None):
     - branch_predicition_head: {branch_predicition_head}
     - context_vector_size: {context_vector_size}
     - num_attention_heads: {num_attention_heads}
+    - branch_output_dim: {branch_output_dim}
     - final_prediction_head: {final_prediction_head}
     - output_size: {output_size}""")
 
+    # Count parameters per branch
+    print("\nModel parameters breakdown:")
+    branch_params = []
+    for i, branch in enumerate(model.branches):
+        branch_total = sum(p.numel() for p in branch.parameters())
+        branch_trainable = sum(p.numel() for p in branch.parameters() if p.requires_grad)
+        branch_params.append(branch_total)
+        print(f"  Branch {i+1}: {branch_total:,} (Trainable: {branch_trainable:,})")
+    
+    # Count attention module parameters
+    if hasattr(model, 'attention'):
+        attn_total = sum(p.numel() for p in model.attention.parameters())
+        attn_trainable = sum(p.numel() for p in model.attention.parameters() if p.requires_grad)
+        print(f"  Attention module: {attn_total:,} (Trainable: {attn_trainable:,})")
+    
+    # Count final prediction head parameters
+    if hasattr(model, 'prediction_head'):
+        head_total = sum(p.numel() for p in model.prediction_head.parameters())
+        head_trainable = sum(p.numel() for p in model.prediction_head.parameters() if p.requires_grad)
+        print(f"  Final prediction head: {head_total:,} (Trainable: {head_trainable:,})")
+    
+    # Total parameters
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"  Total model parameters: {total_params:,} (Trainable: {trainable_params:,})\n")
     
     batch_size = confs['train']['batch_size']
     epochs = confs['train']['epochs']

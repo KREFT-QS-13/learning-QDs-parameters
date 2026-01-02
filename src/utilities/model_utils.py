@@ -127,14 +127,96 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
     model_path = os.path.join(save_dir, f"{model.name}.pth")
     save_model_weights(trained_model, model_path)
         
+    # Extract model configuration information
+    # Try to get branch model type from the first branch
+    branch_model = 'N/A'
+    base_model = 'N/A'
+    dropout = 'N/A'
+    custom_head = 'N/A'
+    
+    try:
+        first_branch = model.branches[0]
+        # Check if it's a ResNet branch
+        if hasattr(first_branch, 'base_model'):
+            # Try to infer model name from the base_model object type
+            base_model_obj = first_branch.base_model
+            model_type = type(base_model_obj).__name__.lower()
+            if 'resnet' in model_type:
+                # Extract number from model type (e.g., 'resnet' -> try to get from structure)
+                branch_model = model_type
+                base_model = model_type
+            else:
+                branch_model = str(model_type)
+                base_model = str(model_type)
+        # Check if it's a CNN branch
+        elif hasattr(first_branch, 'conv_layers'):
+            branch_model = 'cnn'
+            base_model = 'cnn'
+        
+        # Try to get dropout from prediction head or branch
+        if hasattr(model, 'prediction_head'):
+            for layer in model.prediction_head:
+                if isinstance(layer, nn.Dropout):
+                    dropout = float(layer.p)
+                    break
+        # Also check branch prediction head
+        if dropout == 'N/A' and hasattr(first_branch, 'custom_prediction_head'):
+            for layer in first_branch.custom_prediction_head:
+                if isinstance(layer, nn.Dropout):
+                    dropout = float(layer.p)
+                    break
+        
+        # Try to get custom head structure from final prediction head
+        if hasattr(model, 'prediction_head'):
+            head_layers = []
+            for layer in model.prediction_head:
+                if isinstance(layer, nn.Linear):
+                    head_layers.append(int(layer.out_features))
+            if head_layers:
+                custom_head = str(head_layers[:-1])  # Exclude final output layer
+    except Exception as e:
+        # Use defaults if extraction fails
+        pass
+    
+    # Extract data shapes
+    input_shape = list(imgs.shape[1:]) if imgs is not None else [0]  # Exclude batch dimension
+    output_shape = list(outputs.shape[1:]) if outputs is not None else [0]  # Exclude batch dimension
+    dataset_size = len(imgs) if imgs is not None else 0
+    
+    # Create param_names placeholder (used for mode calculation)
+    # This would typically be parameter names from the model, using output shape as proxy
+    # Need at least 2 elements for mode calculation: MW-param_names[-2]-param_names[-1]
+    if output_shape[0] > 0 and output_shape[0] >= 2:
+        param_names = list(range(output_shape[0]))
+    else:
+        param_names = [0, 1]  # Default to at least 2 elements
+    
     # Save the history and metrics
     result = {
-            
-            'input_shape': 0,
-            'output_shape': 0,
-            'dataset_size': 0,
-            'param_names': 0 ,
-            'train_params': 0,
+            'input_shape': input_shape,
+            'output_shape': output_shape,
+            'dataset_size': dataset_size,
+            'param_names': param_names,
+            'config': {
+                'params': {
+                    'name': model.name,
+                    'base_model': base_model,
+                    'branch_model': branch_model,
+                    'custom_head': custom_head,
+                    'dropout': dropout
+                }
+            },
+            'train_params': {
+                'batch_size': batch_size,
+                'epochs': epochs,
+                'learning_rate': learning_rate,
+                'val_split': val_split,
+                'test_split': test_split,
+                'random_state': random_state,
+                'epsilon': epsilon,
+                'regularization_coeff': regularization_coeff,
+                'init_weights': None  # Add init_weights field
+            },
             'history': {k: v for k, v in history.items() if k != 'L2 norm'},
             'test_loss': float(test_loss),
             'global_test_accuracy': float(global_test_accuracy),
@@ -157,7 +239,7 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
 
 def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learning_rate=0.001, val_split=0.2, 
                 test_split=0.1, random_state=42, epsilon=1.0, init_weights=None, 
-                criterion=nn.MSELoss(), regularization_coeff=0.0, device=None):
+                criterion=nn.MSELoss(), regularization_coeff=0.0, device=DEVICE):
     '''
         Train a model on the given data and hyperparameters.
         
@@ -169,7 +251,6 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
             num_branches: Number of branches (required if imgs is a list of lists)
             ... (other parameters remain the same)
     '''
-    print(f"\nUsing device: {device}")
     # move model to GPU
     model = model.to(device)
 
@@ -318,9 +399,18 @@ def collect_performance_metrics(model, test_loader, device=DEVICE):
     all_targets = []
 
     with torch.no_grad():
-        for inputs, targets in tqdm(test_loader, desc="Evaluating"):
-            inputs, targets = inputs.to(device), targets.to(device)
-            outputs = model(inputs)
+        for imgs_batch, context_batch, targets in tqdm(test_loader, desc="Evaluating"):
+            imgs_batch = imgs_batch.to(device)
+            context_batch = context_batch.to(device)
+            targets = targets.to(device)
+            
+            # Expand context if needed (same as in training loop)
+            if context_batch.dim() == 2:
+                # Expand to (batch_size, num_branches, context_vector_size) - same context for all branches
+                num_branches = imgs_batch.shape[1]
+                context_batch = context_batch.unsqueeze(1).expand(-1, num_branches, -1)
+            
+            outputs = model(imgs_batch, context_batch)
             all_outputs.append(outputs.cpu().numpy())
             all_targets.append(targets.cpu().numpy())
 

@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torchvision import models
 
 class CNN(nn.Module):
-    def __init__(self, name, dropout=0.5, custom_cnn_layers:list=None, custom_prediction_head=None, context_vector_size=17, output_size=9):
+    def __init__(self, name, dropout=0.5, custom_cnn_layers:list=None, custom_prediction_head=None, context_vector_size=17, branch_output_dim=256):
         super(CNN, self).__init__()
         self.name = name
         self.context_vector_size = context_vector_size
@@ -35,7 +35,7 @@ class CNN(nn.Module):
             layers.extend([nn.Linear(2048, 1024),
                            nn.ReLU(inplace=True),
                            nn.Dropout(dropout)])
-            layers.extend([nn.Linear(1024, output_size)])
+            layers.extend([nn.Linear(1024, branch_output_dim)])
             self.custom_prediction_head = nn.Sequential(*layers)
         elif isinstance(custom_prediction_head, list) and len(custom_prediction_head) != 0:
             in_features = conv_output_size + self.context_vector_size
@@ -46,7 +46,7 @@ class CNN(nn.Module):
                     nn.Dropout(dropout)
                 ])
                 in_features = out_features
-            layers.append(nn.Linear(in_features, output_size))
+            layers.append(nn.Linear(in_features, branch_output_dim))
             self.custom_prediction_head = nn.Sequential(*layers)
         else:
             raise ValueError(f"Custom prediction head must be a list of length 0 or more, got {len(custom_prediction_head)}")
@@ -94,7 +94,7 @@ class ResNet(nn.Module):
         filters_per_layer (list): Filters per layer
     """
     def __init__(self, name="transfer_model", base_model='resnet18', pretrained=True, 
-                 dropout:float=None, custom_prediction_head:list=None, filters_per_layer:list=[16,32,64,128], context_vector_size=17, output_size=9):
+                 dropout:float=None, custom_prediction_head:list=None, filters_per_layer:list=[16,32,64,128], context_vector_size=17, branch_output_dim=256):
         super(ResNet, self).__init__()
         self.name = name
         self.base_model = self._get_base_model(base_model, pretrained, filters_per_layer)
@@ -123,8 +123,8 @@ class ResNet(nn.Module):
                 ])
                 in_features = out_features
             
-            # Add final layer to match required output size
-            layers.append(nn.Linear(in_features, output_size))
+            # Add final layer to match required branch output dimension
+            layers.append(nn.Linear(in_features, branch_output_dim))
             
             self.custom_prediction_head = nn.Sequential(*layers)
         else:
@@ -136,7 +136,7 @@ class ResNet(nn.Module):
                 nn.Linear(512, 256),
                 nn.ReLU(inplace=True),
                 nn.Dropout(dropout),
-                nn.Linear(256, output_size)
+                nn.Linear(256, branch_output_dim)
             )
         
     def _get_base_model(self, model_name, pretrained, filters_per_layer=None):

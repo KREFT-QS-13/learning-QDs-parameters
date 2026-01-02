@@ -32,7 +32,7 @@ class SimplePoolingAttention(nn.Module):
         return pooled
 
 class PoolingByMultiHeadAttention(nn.Module):
-    def __init__(self, input_dim, num_heads=4, dropout=0.1):
+    def __init__(self, input_dim, num_heads=3, dropout=0.1):
         """
         Pooling-by-Multi-Head-Attention (PMA) module.
         
@@ -118,7 +118,7 @@ class PoolingByMultiHeadAttention(nn.Module):
 class MultiBranchArchitecture(nn.Module):
     def __init__(self, num_branches=3, name="MBArch", branch_model='resnet18', custom_cnn_layers:list=None, pretrained=True, 
                  filters_per_layer:list=[16,32,64,128], dropout:float=0.5, branch_predicition_head:list=None, context_vector_size=17,
-                 pooling_method='spa', num_attention_heads=4, final_prediction_head:list=None, output_size=9):
+                 pooling_method='spa', num_attention_heads=4, branch_output_dim=256, final_prediction_head:list=None, output_size=9):
         super(MultiBranchArchitecture, self).__init__()
         self.name = name
         self.num_branches = num_branches
@@ -138,7 +138,7 @@ class MultiBranchArchitecture(nn.Module):
                     custom_cnn_layers=custom_cnn_layers,
                     custom_prediction_head=branch_predicition_head,
                     context_vector_size=context_vector_size,
-                    output_size=output_size
+                    branch_output_dim=branch_output_dim
                     ) for i in range(num_branches)
                 ])
         elif 'resnet' in branch_model.lower():
@@ -152,14 +152,13 @@ class MultiBranchArchitecture(nn.Module):
                        custom_prediction_head=branch_predicition_head,
                        filters_per_layer=filters_per_layer,
                        context_vector_size=context_vector_size,
-                       output_size=output_size
+                       branch_output_dim=branch_output_dim
                        ) for i in range(num_branches)
                 ])
         else:
             raise ValueError(f"Unsupported branch_model: {branch_model}. Use 'resnet<num_layers>' (e.g., 'resnet18', 'resnet34') or 'cnn'")
         
-        # Get the output features from the first branch to set up attention
-        branch_output_dim = self.branches[0].custom_prediction_head[-1].out_features
+        # Use the provided branch_output_dim for attention (already set from parameter)
         
         # PMA attention module to combine features from different branches
         if pooling_method == 'spa':
