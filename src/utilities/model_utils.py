@@ -122,7 +122,7 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
     # plot_l2_norm_polar(targets, outputs, save_dir, train_params['epsilon'], num_groups=5)
         
     # Save the model
-    save_dir = os.path.join(save_dir, f"{model.name}_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}")
+    save_dir = os.path.join(save_dir, f'{model.name}_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}')
     u.ensure_dir_exists(save_dir)
     model_path = os.path.join(save_dir, f"{model.name}.pth")
     save_model_weights(trained_model, model_path)
@@ -771,7 +771,7 @@ def load_conv_weights(model, path):
     """
     try:
         # Load state dict
-        state_dict = torch.load(path, map_location=c.DEVICE, weights_only=True)
+        state_dict = torch.load(path, map_location=DEVICE, weights_only=True)
         
         # Create new state dict with only conv layers
         new_state_dict = {}
