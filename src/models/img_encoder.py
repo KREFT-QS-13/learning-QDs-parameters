@@ -3,6 +3,57 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models
 
+def initialize_weights(module, init_type='xavier', gain=1.0, bias_init='zeros', skip_pretrained=True):
+    """
+    Initialize weights for neural network modules.
+    
+    Args:
+        module (nn.Module): Module to initialize
+        init_type (str): Type of initialization - 'xavier', 'kaiming', or 'small'
+        gain (float): Gain factor for initialization (default: 1.0)
+        bias_init (str or float): Bias initialization - 'zeros', 'small' (0.01), or float value
+        skip_pretrained (bool): Skip modules that might be pretrained (default: True)
+    """
+    for name, m in module.named_modules():
+        # Skip pretrained layers if flag is set
+        if skip_pretrained and ('base_model' in name or 'pretrained' in name.lower()):
+            continue
+            
+        if isinstance(m, nn.Linear):
+            if init_type == 'xavier':
+                nn.init.xavier_uniform_(m.weight, gain=gain)
+            elif init_type == 'kaiming':
+                nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu', a=0)
+            elif init_type == 'small':
+                nn.init.xavier_uniform_(m.weight, gain=gain * 0.1)
+            else:
+                nn.init.xavier_uniform_(m.weight, gain=gain)
+            
+            if m.bias is not None:
+                if bias_init == 'zeros':
+                    nn.init.zeros_(m.bias)
+                elif bias_init == 'small':
+                    nn.init.constant_(m.bias, 0.01)
+                elif isinstance(bias_init, (int, float)):
+                    nn.init.constant_(m.bias, bias_init)
+                else:
+                    nn.init.zeros_(m.bias)
+        
+        elif isinstance(m, nn.Conv2d):
+            if init_type == 'kaiming':
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            else:
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        
+        elif isinstance(m, (nn.BatchNorm2d, nn.BatchNorm1d)):
+            nn.init.constant_(m.weight, 1)
+            nn.init.constant_(m.bias, 0)
+        
+        # LayerNorm is already initialized properly by PyTorch
+
 class ContextEncoder(nn.Module):
     """
     Context encoder that processes context vectors through a small neural network.
@@ -42,6 +93,9 @@ class ContextEncoder(nn.Module):
         layers.append(nn.Linear(in_features, context_embedding_dim))
         
         self.context_mlp = nn.Sequential(*layers)
+        
+        # Initialize weights
+        initialize_weights(self, init_type='xavier', bias_init='zeros', skip_pretrained=False)
 
     def forward(self, context_vector):
         """
