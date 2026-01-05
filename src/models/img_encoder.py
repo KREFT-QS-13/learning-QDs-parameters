@@ -42,7 +42,7 @@ class ContextEncoder(nn.Module):
         layers.append(nn.Linear(in_features, context_embedding_dim))
         
         self.context_mlp = nn.Sequential(*layers)
-    
+
     def forward(self, context_vector):
         """
         Forward pass of context encoder.

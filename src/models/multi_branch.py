@@ -61,7 +61,7 @@ class PoolingByMultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
         
         # Temperature parameter for softmax
-        self.temperature = nn.Parameter(torch.ones(1) * 0.1)
+        self.temperature = nn.Parameter(torch.ones(1) * 1.0)
         
     def forward(self, x, return_weights=False):
         """
@@ -108,8 +108,8 @@ class PoolingByMultiHeadAttention(nn.Module):
         # Project to output dimension
         output = self.out_proj(context)
         
-        # mean over branches
-        output = output.mean(dim=1)  # [batch_size, input_dim]
+        # aggregate over branches
+        output = output.mean(dim=1)  # [batch_size, input_dim], test sum vs mean or weighted mean
         
         if return_weights:
             return output, attn_weights
@@ -191,9 +191,11 @@ class MultiBranchArchitecture(nn.Module):
             # Default fusion architecture
             self.branch_fusion = nn.Sequential(
                 nn.Linear(fusion_input_dim, branch_embedding_dim),
+                nn.LayerNorm(branch_embedding_dim),
                 nn.ReLU(inplace=True),
                 nn.Dropout(dropout),
-                nn.Linear(branch_embedding_dim, branch_embedding_dim)
+                nn.Linear(branch_embedding_dim, branch_embedding_dim),
+                nn.LayerNorm(branch_embedding_dim),
             )
         
         # PMA attention module to combine features from different branches
