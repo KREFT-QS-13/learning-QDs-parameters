@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torchvision import models
 
-from src.models.img_encoder import CNN, ResNet
+from src.models.img_encoder import CNN, ResNet, ContextEncoder
 
 class SimplePoolingAttention(nn.Module):
     """
@@ -108,8 +108,8 @@ class PoolingByMultiHeadAttention(nn.Module):
         # Project to output dimension
         output = self.out_proj(context)
         
-        # Sum over branches
-        output = output.sum(dim=1)  # [batch_size, input_dim]
+        # mean over branches
+        output = output.mean(dim=1)  # [batch_size, input_dim]
         
         if return_weights:
             return output, attn_weights
@@ -118,10 +118,21 @@ class PoolingByMultiHeadAttention(nn.Module):
 class MultiBranchArchitecture(nn.Module):
     def __init__(self, num_branches=3, name="MBArch", branch_model='resnet18', custom_cnn_layers:list=None, pretrained=True, 
                  filters_per_layer:list=[16,32,64,128], dropout:float=0.5, branch_predicition_head:list=None, context_vector_size=17,
-                 pooling_method='spa', num_attention_heads=4, branch_output_dim=256, final_prediction_head:list=None, output_size=9):
+                 pooling_method='spa', num_attention_heads=4, branch_embedding_dim=256, final_prediction_head:list=None, output_size=9,
+                 context_embedding_dim=64, context_hidden_dims=None):
         super(MultiBranchArchitecture, self).__init__()
         self.name = name
         self.num_branches = num_branches
+        self.context_vector_size = context_vector_size
+        self.branch_embedding_dim = branch_embedding_dim
+
+        # Create context encoder (shared across all branches)
+        self.context_encoder = ContextEncoder(
+            context_vector_size=context_vector_size,
+            context_embedding_dim=context_embedding_dim,
+            dropout=dropout,
+            hidden_dims=context_hidden_dims
+        )
 
         # Validate and create branches based on branch_model type
         if 'cnn' in branch_model.lower():
@@ -131,47 +142,72 @@ class MultiBranchArchitecture(nn.Module):
             if not isinstance(custom_cnn_layers, list) or len(custom_cnn_layers) == 0:
                 raise ValueError("custom_cnn_layers must be a non-empty list of tuples")
             
-            # Create CNN branches
+            # Create CNN branches (image encoders only)
             self.branches = nn.ModuleList([
                 CNN(name=f"branch_{i}", 
                     dropout=dropout, 
-                    custom_cnn_layers=custom_cnn_layers,
-                    custom_prediction_head=branch_predicition_head,
-                    context_vector_size=context_vector_size,
-                    branch_output_dim=branch_output_dim
+                    custom_cnn_layers=custom_cnn_layers
                     ) for i in range(num_branches)
                 ])
         elif 'resnet' in branch_model.lower():
             # ResNet requires base_model, pretrained, and filters_per_layer
-            # Create ResNet branches
+            # Create ResNet branches (image encoders only)
             self.branches = nn.ModuleList([
                 ResNet(name=f"branch_{i}", 
                        base_model=branch_model,
                        pretrained=pretrained,
                        dropout=dropout, 
-                       custom_prediction_head=branch_predicition_head,
-                       filters_per_layer=filters_per_layer,
-                       context_vector_size=context_vector_size,
-                       branch_output_dim=branch_output_dim
+                       filters_per_layer=filters_per_layer
                        ) for i in range(num_branches)
                 ])
         else:
             raise ValueError(f"Unsupported branch_model: {branch_model}. Use 'resnet<num_layers>' (e.g., 'resnet18', 'resnet34') or 'cnn'")
         
-        # Use the provided branch_output_dim for attention (already set from parameter)
+        # Get the feature dimension from the first branch
+        image_feature_dim = self.branches[0].feature_dim
+        
+        # Fusion layers to combine image features and context embeddings for each branch
+        # Input: image_features (image_feature_dim) + context_embedding (context_embedding_dim)
+        fusion_input_dim = image_feature_dim + context_embedding_dim
+        
+        if branch_predicition_head is not None:
+            layers = []
+            in_features = fusion_input_dim
+            
+            # Build layers based on the provided list
+            for out_features in branch_predicition_head[:-1]:  # All layers except the last one
+                layers.extend([
+                    nn.Linear(in_features, out_features),
+                    nn.ReLU(inplace=True),
+                    nn.Dropout(dropout)
+                ])
+                in_features = out_features
+            
+            # Add final layer to match required branch output dimension
+            layers.append(nn.Linear(in_features, branch_embedding_dim))
+            
+            self.branch_fusion = nn.Sequential(*layers)
+        else:
+            # Default fusion architecture
+            self.branch_fusion = nn.Sequential(
+                nn.Linear(fusion_input_dim, branch_embedding_dim),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout),
+                nn.Linear(branch_embedding_dim, branch_embedding_dim)
+            )
         
         # PMA attention module to combine features from different branches
         if pooling_method == 'spa':
-            self.attention = SimplePoolingAttention(branch_output_dim)
+            self.attention = SimplePoolingAttention(branch_embedding_dim)
         elif pooling_method == 'pma':
-            self.attention = PoolingByMultiHeadAttention(branch_output_dim, num_heads=num_attention_heads, dropout=dropout)
+            self.attention = PoolingByMultiHeadAttention(branch_embedding_dim, num_heads=num_attention_heads, dropout=dropout)
         else:
             raise ValueError(f'Unsupported pooling method: {pooling_method}. Please use:\n - spa for Simple Pooling Attention\n - pma for Pooling by Multi-Head Attention')
         
         # Final prediction head
         if final_prediction_head is not None:
             layers = []
-            in_features = branch_output_dim
+            in_features = branch_embedding_dim
             
             # Build layers based on the provided list
             for out_features in final_prediction_head[:-1]:  # All layers except the last one
@@ -189,7 +225,7 @@ class MultiBranchArchitecture(nn.Module):
         else:
             # Default architecture if no custom_head is provided
             self.prediction_head = nn.Sequential(
-                nn.Linear(branch_output_dim, 512), # Q: Should branch output be the same as the output size of the final prediction head after pooling block?
+                nn.Linear(branch_embedding_dim, 512), # Q: Should branch output be the same as the output size of the final prediction head after pooling block?
                 nn.ReLU(inplace=True),
                 nn.Dropout(dropout),
                 nn.Linear(512, 256),
@@ -200,11 +236,12 @@ class MultiBranchArchitecture(nn.Module):
 
     def forward(self, x, context_vector, return_attention=False):
         """
-        Forward pass of the multi-branch CNN.
+        Forward pass of the multi-branch architecture.
         
         Args:
             x (torch.Tensor): Input tensor of shape (batch_size, num_branches, channels, height, width)
-            context_vector (torch.Tensor): Context vector tensor of shape (batch_size, context_vector_size)
+            context_vector (torch.Tensor): Context vector tensor of shape (batch_size, num_branches, context_vector_size)
+                                           or (batch_size, context_vector_size) - will be expanded if needed
             return_attention (bool): Whether to return attention weights
             
         Returns:
@@ -216,20 +253,43 @@ class MultiBranchArchitecture(nn.Module):
         # Verify input shape matches number of branches
         if x.size(1) != self.num_branches:
             raise ValueError(f"Input tensor has {x.size(1)} branches but model expects {self.num_branches} branches")
-                
-        # Process each branch
+        
+        # Handle context vector shape - expand if needed
+        if context_vector.dim() == 2:
+            # Expand from (batch_size, context_vector_size) to (batch_size, num_branches, context_vector_size)
+            context_vector = context_vector.unsqueeze(1).expand(-1, self.num_branches, -1)
+        elif context_vector.dim() == 3:
+            if context_vector.size(1) != self.num_branches:
+                raise ValueError(f"Context vector has {context_vector.size(1)} branches but model expects {self.num_branches} branches")
+        else:
+            raise ValueError(f"Context vector must be 2D or 3D, got shape {context_vector.shape}")
+        
+        # Process context through ContextEncoder
+        # Input: (batch_size, num_branches, context_vector_size)
+        # Output: (batch_size, num_branches, context_embedding_dim)
+        context_embeddings = self.context_encoder(context_vector)
+        
+        # Process each branch: image -> image features, then fuse with context
         branch_outputs = []
         for i in range(self.num_branches):
+            # Process image through branch encoder
             branch_input = x[:, i]  # Select the i-th image for this branch
-            context_vector_input = context_vector[:, i]
-            branch_output = self.branches[i](branch_input, context_vector_input)
+            image_features = self.branches[i](branch_input)  # (batch_size, branch_embedding_dim)
+            
+            # Get context embedding for this branch
+            context_emb = context_embeddings[:, i]  # (batch_size, context_embedding_dim)
+            
+            # Fuse image features and context embedding
+            fused_features = torch.cat([image_features, context_emb], dim=1)  # (batch_size, branch_embedding_dim + context_embedding_dim)
+            branch_output = self.branch_fusion(fused_features)  # (batch_size, branch_embedding_dim)
+            
             branch_outputs.append(branch_output)
         
         # Stack branch outputs
         # Shape: (batch_size, num_branches, features)
         stacked_outputs = torch.stack(branch_outputs, dim=1)
         
-        # Apply PMA attention to combine branch outputs
+        # Apply attention to combine branch outputs
         if return_attention:
             attended_features, attention_weights = self.attention(stacked_outputs, return_weights=True)
         else:

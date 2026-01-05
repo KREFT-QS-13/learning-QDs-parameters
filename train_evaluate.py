@@ -53,10 +53,37 @@ def tsem(model_config_path:str, num_dps:int=None):
 
     # High level model configuration
     model_name = confs['model']['name']
-    branch_model = confs['model']['params']['branch_model']
-    pooling_method = confs['model']['params']['pooling_method']
-    num_branches = confs['model']['params']['num_branches']
-    print(f"Tranining model {model_name} with {num_branches} branches each with{branch_model} as img encoder and {pooling_method} branches pooling method.")
+    num_branches = confs['model']['num_branches']
+    dropout = confs['model']['dropout']
+    output_size = confs['model']['output_size']
+    
+    # Image encoder configuration
+    image_encoder = confs['model']['image_encoder']
+    branch_model = image_encoder['type']
+    pretrained = image_encoder['pretrained']
+    filters_per_layer = image_encoder['filters_per_layer']
+    custom_cnn_layers = image_encoder['custom_cnn_layers']
+    
+    # Context encoder configuration
+    context_encoder = confs['model']['context_encoder']
+    context_vector_size = context_encoder['context_vector_size']
+    context_embedding_dim = context_encoder['context_embedding_dim']
+    context_hidden_dims = context_encoder.get('hidden_dims', None)
+    
+    # Branch fusion configuration
+    branch_fusion = confs['model']['branch_fusion']
+    branch_predicition_head = branch_fusion['hidden_dims']
+    branch_embedding_dim = branch_fusion['branch_embedding_dim']
+    
+    # Attention configuration
+    attention = confs['model']['attention']
+    pooling_method = attention['method']
+    num_attention_heads = attention['num_heads']
+    
+    # Final prediction head configuration
+    final_prediction_head = confs['model']['final_prediction_head']['hidden_dims']
+    
+    print(f"Training model {model_name} with {num_branches} branches, {branch_model} as image encoder, and {pooling_method} attention method.")
 
     # Check available devices and print type and device name
     if torch.cuda.is_available():
@@ -70,18 +97,6 @@ def tsem(model_config_path:str, num_dps:int=None):
         print(f"CUDA is not available. Using CPU.")
         print(f"Device: cpu")
     
-    # the rest of the model configuration
-    custom_cnn_layers = confs['model']['params']['custom_cnn_layers']
-    pretrained = confs['model']['params']['pretrained']
-    filters_per_layer = confs['model']['params']['filters_per_layer']
-    dropout = confs['model']['params']['dropout']
-    branch_predicition_head = confs['model']['params']['branch_predicition_head']
-    context_vector_size = confs['model']['params']['context_vector_size']
-    num_attention_heads = confs['model']['params']['num_attention_heads']
-    branch_output_dim = confs['model']['params']['branch_output_dim']
-    final_prediction_head = confs['model']['params']['final_prediction_head']
-    output_size = confs['model']['params']['output_size']
-
     model = MultiBranchArchitecture(name=model_name,
                                     branch_model=branch_model,
                                     pooling_method=pooling_method,
@@ -93,25 +108,39 @@ def tsem(model_config_path:str, num_dps:int=None):
                                     branch_predicition_head=branch_predicition_head,
                                     context_vector_size=context_vector_size,
                                     num_attention_heads=num_attention_heads,
-                                    branch_output_dim=branch_output_dim,
+                                    branch_embedding_dim=branch_embedding_dim,
                                     final_prediction_head=final_prediction_head,
-                                    output_size=output_size)
+                                    output_size=output_size,
+                                    context_embedding_dim=context_embedding_dim,
+                                    context_hidden_dims=context_hidden_dims)
     
     print(f"""Detailed model parameters: 
     - name: {model_name}
-    - branch_model: {branch_model}
-    - pooling_method: {pooling_method}
     - num_branches: {num_branches}
-    - custom_cnn_layers: {custom_cnn_layers}
+    - dropout: {dropout}
+    - output_size: {output_size}
+    
+    Image Encoder:
+    - type: {branch_model}
     - pretrained: {pretrained}
     - filters_per_layer: {filters_per_layer}
-    - dropout: {dropout}
-    - branch_predicition_head: {branch_predicition_head}
+    - custom_cnn_layers: {custom_cnn_layers}
+    
+    Context Encoder:
     - context_vector_size: {context_vector_size}
-    - num_attention_heads: {num_attention_heads}
-    - branch_output_dim: {branch_output_dim}
-    - final_prediction_head: {final_prediction_head}
-    - output_size: {output_size}""")
+    - context_embedding_dim: {context_embedding_dim}
+    - hidden_dims: {context_hidden_dims}
+    
+    Branch Fusion:
+    - hidden_dims: {branch_predicition_head}
+    - branch_embedding_dim: {branch_embedding_dim}
+    
+    Attention:
+    - method: {pooling_method}
+    - num_heads: {num_attention_heads}
+    
+    Final Prediction Head:
+    - hidden_dims: {final_prediction_head}""")
 
     # Count parameters per branch
     print("\nModel parameters breakdown:")
