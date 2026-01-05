@@ -851,16 +851,14 @@ def create_context(data: dict) -> torch.Tensor:
         y_volts = y_volts.squeeze()
         x_volts = x_volts.squeeze()
         cuts = cuts.squeeze()
-
+     
         inner_list = [] # contain 3 lists: v_off, x_volts_cut_i, y_volts_cut_i
-        for cut in range(x_volts.shape[0]):
-                inner_list.append(np.concatenate([v_off, x_volts[cut], y_volts[cut], cuts[cut]], axis=None))
+        for cut in range(cuts.shape[0]):
+                inner_list.append(np.concatenate([v_off, x_volts[cut][:-1], y_volts[cut][:-1], cuts[cut][:,:-1]], axis=None))   
                 
         context.append(inner_list)
     
-    # Take the first context vector from each datapoint (assuming same context for all branches)
-    context_list = [ctx[0] for ctx in context]  # Take first context vector per datapoint
-    context_tensor = torch.FloatTensor(np.array(context_list))  # (N, context_vector_size)
+    context_tensor = torch.FloatTensor(np.array(context))  # (N, num_branches, context_vector_size)
     
     return context_tensor
 
