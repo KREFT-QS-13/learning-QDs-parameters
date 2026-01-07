@@ -288,6 +288,7 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
         model.train()
         
         train_loss = 0.0
+        total_train_samples = 0  # Track total number of samples for proper averaging
         all_train_outputs = []
         all_train_targets = []
 
@@ -304,7 +305,10 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
             loss.backward()
             optimizer.step()
             
-            train_loss += loss.item()
+            # Accumulate loss weighted by batch size for proper averaging over all samples
+            batch_size = outputs.shape[0]
+            train_loss += loss.item() * batch_size
+            total_train_samples += batch_size
 
             # Convert to numpy and ensure correct shape
             predicted_values = outputs.detach().cpu().numpy()
@@ -319,7 +323,8 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
             all_train_outputs.append(predicted_values)
             all_train_targets.append(true_values)
 
-        avg_train_loss = train_loss / len(train_loader)
+        # Compute average loss over all samples (not batches) for consistency
+        avg_train_loss = train_loss / total_train_samples if total_train_samples > 0 else 0
         
         # Concatenate all batches
         all_train_outputs = np.concatenate(all_train_outputs, axis=0)
@@ -329,6 +334,12 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
         local_train_acc = np.round(np.mean(vec_local_train_acc), 2)
 
         train_mse = mean_squared_error(all_train_targets, all_train_outputs)
+        
+        # Compute training loss on all samples for verification (should match avg_train_loss)
+        # Note: This computation is done in train mode, so it should match avg_train_loss
+        all_train_outputs_tensor = torch.tensor(all_train_outputs, dtype=torch.float32).to(device)
+        all_train_targets_tensor = torch.tensor(all_train_targets, dtype=torch.float32).to(device)
+        train_loss_all_samples = criterion(all_train_outputs_tensor, all_train_targets_tensor).item()
 
         history['train_losses'].append(avg_train_loss)
         history['train_accuracies'].append([global_train_acc, local_train_acc])
@@ -341,13 +352,38 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
         history['val_accuracies'].append([global_val_acc, local_val_acc])
         history['vec_local_val_accuracy'].append(vec_local_val_acc)
         history['val_mse'].append(val_mse)
+        
+        # Diagnostic: Compute training loss in eval mode to quantify dropout/BN effect
+        model.eval()
+        with torch.no_grad():
+            train_loss_eval_mode = 0.0
+            train_samples_eval = 0
+            for imgs_batch, context_batch, targets in train_loader:
+                if context_batch.dim() == 2:
+                    num_branches = imgs_batch.shape[1]
+                    context_batch = context_batch.unsqueeze(1).expand(-1, num_branches, -1)
+                outputs = model(imgs_batch, context_batch)
+                loss = criterion(outputs, targets)
+                batch_size = outputs.shape[0]
+                train_loss_eval_mode += loss.item() * batch_size
+                train_samples_eval += batch_size
+            
+            train_loss_eval_mode = train_loss_eval_mode / train_samples_eval if train_samples_eval > 0 else 0
+        model.train()  # Set back to train mode
 
+        # Print comprehensive diagnostics
         print(f"Epoch {epoch+1}/{epochs}: Tr. Loss: {avg_train_loss:.5f}, Val. Loss: {val_loss:.5f}")
         print(f"{'':<11} Tr. Acc.: {global_train_acc}% ({local_train_acc}%), "
               f"Val. Acc.: {global_val_acc}% ({local_val_acc}%)")
         print(f"{'':<11} Vec. Tr. Local Acc.: {vec_local_train_acc}%")
         print(f"{'':<11} Vec. Val. Local Acc.: {vec_local_val_acc}%")
         print(f"{'':<11} Tr. MSE: {train_mse:.5f}, Val. MSE: {val_mse:.5f}")
+        # Diagnostic information
+        print(f"{'':<11} [Diagnostics] Tr. Loss (all-samples): {train_loss_all_samples:.5f}, "
+              f"Diff from batch-avg: {abs(avg_train_loss - train_loss_all_samples):.6f}")
+        print(f"{'':<11} [Diagnostics] Tr. Loss (eval mode): {train_loss_eval_mode:.5f}, "
+              f"Gap due to dropout/BN: {avg_train_loss - train_loss_eval_mode:.5f}")
+        print(f"{'':<11} [Diagnostics] Val Loss vs Val MSE diff: {abs(val_loss - val_mse):.6f}")
 
     return model, history, test_loader
 
@@ -355,6 +391,7 @@ def evaluate_model(model, dataloader, criterion=nn.MSELoss(), epsilon=1.0,  regu
     model.eval()
 
     total_loss = 0.0
+    total_samples = 0  # Track total number of samples for proper averaging
     output_dim = None
     all_outputs = []
     all_targets = []
@@ -370,7 +407,11 @@ def evaluate_model(model, dataloader, criterion=nn.MSELoss(), epsilon=1.0,  regu
                 context_batch = context_batch.unsqueeze(1).expand(-1, num_branches, -1)
             outputs = model(imgs_batch, context_batch)
             loss = calculate_loss(criterion, outputs, targets, regularization_coeff)
-            total_loss += loss.item()
+            
+            # Accumulate loss weighted by batch size for proper averaging over all samples
+            batch_size = outputs.shape[0]
+            total_loss += loss.item() * batch_size
+            total_samples += batch_size
             
             output_dim = outputs.shape[1]
             predicted_values = outputs.cpu().numpy()
@@ -381,7 +422,8 @@ def evaluate_model(model, dataloader, criterion=nn.MSELoss(), epsilon=1.0,  regu
             all_outputs.extend(predicted_values)
             all_targets.extend(true_values)
 
-    avg_loss = total_loss / len(dataloader)
+    # Compute average loss over all samples (not batches) for consistency
+    avg_loss = total_loss / total_samples if total_samples > 0 else 0
 
     all_targets = np.array(all_targets).reshape(-1, output_dim)
     all_outputs = np.array(all_outputs).reshape(-1, output_dim)
