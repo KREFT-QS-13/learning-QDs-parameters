@@ -102,7 +102,7 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
     print("\n\n--------- START TRAINING ---------")
     trained_model, history, test_loader = train_model(model, imgs, context, outputs, batch_size, epochs, learning_rate, val_split, test_split, random_state, epsilon, regularization_coeff)
         
-    # Evaluate the model
+    # Final test of the model
     test_loss, global_test_accuracy, local_test_accuracy, test_mse, predictions, vec_local_test_accuracy = evaluate_model(trained_model, test_loader, epsilon=epsilon)
         
     # Collect performance metrics on the test set
@@ -256,8 +256,14 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
 
     train_loader, val_loader, test_loader = divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, random_state, device)
 
-    # Define loss function and optimizer
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    # Define loss function, optimizer and learning rate scheduler
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5) # test also AdamW
+    lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)    
+
+    # Add early stopping
+    best_val_loss = float('inf')
+    patience_counter = 0
+    early_stop_patience = 10
 
     history = {
         'train_losses': [],
@@ -303,6 +309,7 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
             outputs = model(imgs_batch, context_batch)
             loss = calculate_loss(criterion, outputs, targets, regularization_coeff)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # Gradient clipping
             optimizer.step()
             
             # Accumulate loss weighted by batch size for proper averaging over all samples
@@ -371,8 +378,11 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
             train_loss_eval_mode = train_loss_eval_mode / train_samples_eval if train_samples_eval > 0 else 0
         model.train()  # Set back to train mode
 
-        # Print comprehensive diagnostics
-        print(f"Epoch {epoch+1}/{epochs}: Tr. Loss: {avg_train_loss:.5f}, Val. Loss: {val_loss:.5f}")
+        # Update learning rate scheduler
+        lr_scheduler.step(val_loss) 
+        current_lr = optimizer.param_groups[0]['lr']
+
+        print(f"Epoch {epoch+1}/{epochs}: Tr. Loss: {avg_train_loss:.5f}, Val. Loss: {val_loss:.5f}, LR: {current_lr:.6f}")
         print(f"{'':<11} Tr. Acc.: {global_train_acc}% ({local_train_acc}%), "
               f"Val. Acc.: {global_val_acc}% ({local_val_acc}%)")
         print(f"{'':<11} Vec. Tr. Local Acc.: {vec_local_train_acc}%")

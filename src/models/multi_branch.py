@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torchvision import models
 
-from src.models.img_encoder import CNN, ResNet, ContextEncoder
+from src.models.img_encoder import CNN, ResNet, ContextEncoder, initialize_weights
 
 class SimplePoolingAttention(nn.Module):
     """
@@ -21,6 +21,9 @@ class SimplePoolingAttention(nn.Module):
             nn.Tanh(),
             nn.Linear(hidden_dim, 1)
         )
+        
+        # Initialize weights with smaller gain for attention stability
+        initialize_weights(self, init_type='small', gain=0.1, bias_init='zeros', skip_pretrained=False)
 
     def forward(self, x, return_weights=False):
         scores = self.score(x).squeeze(-1)
@@ -61,7 +64,10 @@ class PoolingByMultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
         
         # Temperature parameter for softmax
-        self.temperature = nn.Parameter(torch.ones(1) * 0.1)
+        self.temperature = nn.Parameter(torch.ones(1) * 1.0)
+        
+        # Initialize weights
+        initialize_weights(self, init_type='xavier', bias_init='zeros', skip_pretrained=False)
         
     def forward(self, x, return_weights=False):
         """
@@ -108,8 +114,8 @@ class PoolingByMultiHeadAttention(nn.Module):
         # Project to output dimension
         output = self.out_proj(context)
         
-        # mean over branches
-        output = output.mean(dim=1)  # [batch_size, input_dim]
+        # aggregate over branches
+        output = output.mean(dim=1)  # [batch_size, input_dim], test sum vs mean or weighted mean
         
         if return_weights:
             return output, attn_weights
@@ -191,9 +197,11 @@ class MultiBranchArchitecture(nn.Module):
             # Default fusion architecture
             self.branch_fusion = nn.Sequential(
                 nn.Linear(fusion_input_dim, branch_embedding_dim),
+                nn.LayerNorm(branch_embedding_dim),
                 nn.ReLU(inplace=True),
                 nn.Dropout(dropout),
-                nn.Linear(branch_embedding_dim, branch_embedding_dim)
+                nn.Linear(branch_embedding_dim, branch_embedding_dim),
+                nn.LayerNorm(branch_embedding_dim),
             )
         
         # PMA attention module to combine features from different branches
@@ -233,6 +241,24 @@ class MultiBranchArchitecture(nn.Module):
                 nn.Dropout(dropout),
                 nn.Linear(256, output_size)
             )
+        
+        # Initialize all new layers (skip pretrained ResNet/CNN layers)
+        # Context encoder and attention are already initialized in their __init__
+        # Only initialize branch fusion and prediction head here
+        # Use Kaiming initialization for ReLU activations
+        for name, module in self.named_modules():
+            # Skip pretrained layers and already initialized modules
+            if 'branches' in name and ('base_model' in name or 'conv_layers' in name):
+                continue
+            if 'context_encoder' in name or 'attention' in name:
+                continue
+            
+            # Initialize branch fusion and prediction head with Kaiming (good for ReLU)
+            if 'branch_fusion' in name or 'prediction_head' in name:
+                if isinstance(module, nn.Linear):
+                    nn.init.kaiming_uniform_(module.weight, mode='fan_in', nonlinearity='relu')
+                    if module.bias is not None:
+                        nn.init.constant_(module.bias, 0.01)
 
     def forward(self, x, context_vector, return_attention=False):
         """
