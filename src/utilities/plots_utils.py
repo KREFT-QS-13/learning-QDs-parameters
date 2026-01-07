@@ -1,8 +1,8 @@
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
 from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
+import src.utilities.utils as u
 
 def exp1_plot_mse_mae_r2(csv_path:str, system_name:str, output_path:str='Results/Figs', cmap:str='viridis', r2_amplitude:float=1e5, r2_scale:int=0.05, 
                          min_r2_color:str='#ffeda0', max_r2_color:str='#f03b20'):
@@ -167,3 +167,49 @@ def exp1_plot_mse_mae_r2(csv_path:str, system_name:str, output_path:str='Results
         plt.close()
     else:
         plt.show() 
+
+def plot_prediction_vs_true_elementwise(targets, outputs, save_dir, figsize_per_subplot=(5, 5), 
+                                         max_cols=4, alpha=0.5, s=10):
+    """
+    Create element-wise scatter plots of predicted vs true values.
+    Each output dimension gets its own subplot showing predicted vs true values.
+    
+    Args:
+        targets (np.array): True values, shape (N, output_dim) where N is number of samples
+        outputs (np.array): Predicted values, shape (N, output_dim)
+        save_dir (str): Directory to save the plot
+        figsize_per_subplot (tuple): Figure size per subplot (width, height)
+        max_cols (int): Maximum number of columns in the subplot grid
+        alpha (float): Transparency of scatter points (0-1)
+        s (float): Size of scatter points
+    
+    Returns:
+        None
+    """
+    u.ensure_dir_exists(save_dir)
+    
+    # Ensure inputs are numpy arrays
+    targets = np.array(targets).squeeze()
+    outputs = np.array(outputs).squeeze()
+    
+    # Validate shapes
+    if targets.shape != outputs.shape:
+        raise ValueError(f"Shapes must match: targets {targets.shape} vs outputs {outputs.shape}")
+    
+    if len(targets.shape) != 2:
+        raise ValueError(f"Expected 2D arrays (N, output_dim), got shape {targets.shape}")
+    
+    num_samples, output_dim = targets.shape
+    
+    # Calculate grid dimensions
+    num_cols = min(max_cols, output_dim)
+    num_rows = int(np.ceil(output_dim / num_cols))
+    
+    # Create figure with appropriate size
+    fig_width = figsize_per_subplot[0] * num_cols
+    fig_height = figsize_per_subplot[1] * num_rows
+    fig, axes = plt.subplots(num_rows, num_cols, figsize=(fig_width, fig_height))
+    
+    #TODO :  preprocess the data into (num_dots,num_dots,2,N) ,then for loop through each dot and plot the scatter plot for each element of the 3x3 matrix
+    # add pearson correlation coefficient to the title    
+ 
