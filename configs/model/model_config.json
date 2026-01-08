@@ -1,0 +1,55 @@
+{
+  "model": {
+    "name": "MBArch",
+    "num_branches": 3,
+    "dropout": 0.05,
+    "output_size": 9,
+    
+    "image_encoder": {
+      "type": "resnet18",
+      "pretrained": true,
+      "filters_per_layer": null,
+      "custom_cnn_layers": null
+    },
+    
+    "context_encoder": {
+      "context_vector_size": 13,
+      "context_embedding_dim": 128,
+      "hidden_dims": [128, 64]
+    },
+    
+    "branch_fusion": {
+      "hidden_dims": [256, 128],
+      "branch_embedding_dim": 128
+    },
+    
+    "attention": {
+      "method": "pma",
+      "num_heads": 2
+    },
+    
+    "final_prediction_head": {
+      "hidden_dims": [256, 64]
+    },
+    
+    "auxiliary_heads": {
+      "use_auxiliary_heads": true,
+      "auxiliary_loss_weight": 0.4
+    }
+  },
+  
+  "train": {
+    "batch_size": 32,
+    "epochs": 30,
+    "learning_rate": 0.1,
+    "val_split": 0.15,
+    "test_split": 0.1,
+    "random_state": 42,
+    "epsilon": 0.5
+  },
+  
+  "paths": {
+    "dataset_path": "datasets/sys_3_1__1/",
+    "main_dir_results": "results/"
+  }
+}

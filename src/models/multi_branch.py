@@ -125,7 +125,7 @@ class MultiBranchArchitecture(nn.Module):
     def __init__(self, num_branches=3, name="MBArch", branch_model='resnet18', custom_cnn_layers:list=None, pretrained=True, 
                  filters_per_layer:list=[16,32,64,128], dropout:float=0.5, branch_predicition_head:list=None, context_vector_size=17,
                  pooling_method='spa', num_attention_heads=4, branch_embedding_dim=256, final_prediction_head:list=None, output_size=9,
-                 context_embedding_dim=64, context_hidden_dims=None):
+                 context_embedding_dim=64, context_hidden_dims=None, use_auxiliary_heads=False, auxiliary_loss_weight=0.3):
         super(MultiBranchArchitecture, self).__init__()
         self.name = name
         self.num_branches = num_branches
@@ -242,9 +242,26 @@ class MultiBranchArchitecture(nn.Module):
                 nn.Linear(256, output_size)
             )
         
+        # Auxiliary heads for ensuring each branch contributes
+        self.use_auxiliary_heads = use_auxiliary_heads
+        self.auxiliary_loss_weight = auxiliary_loss_weight
+        
+        if use_auxiliary_heads:
+            # Create a prediction head for each branch
+            self.auxiliary_heads = nn.ModuleList([
+                nn.Sequential(
+                    nn.Linear(branch_embedding_dim, 128),
+                    nn.ReLU(inplace=True),
+                    nn.Dropout(dropout),
+                    nn.Linear(128, output_size)
+                ) for _ in range(num_branches)
+            ])
+        else:
+            self.auxiliary_heads = None
+        
         # Initialize all new layers (skip pretrained ResNet/CNN layers)
         # Context encoder and attention are already initialized in their __init__
-        # Only initialize branch fusion and prediction head here
+        # Only initialize branch fusion, prediction head, and auxiliary heads here
         # Use Kaiming initialization for ReLU activations
         for name, module in self.named_modules():
             # Skip pretrained layers and already initialized modules
@@ -253,14 +270,14 @@ class MultiBranchArchitecture(nn.Module):
             if 'context_encoder' in name or 'attention' in name:
                 continue
             
-            # Initialize branch fusion and prediction head with Kaiming (good for ReLU)
-            if 'branch_fusion' in name or 'prediction_head' in name:
+            # Initialize branch fusion, prediction head, and auxiliary heads with Kaiming (good for ReLU)
+            if 'branch_fusion' in name or 'prediction_head' in name or 'auxiliary_heads' in name:
                 if isinstance(module, nn.Linear):
                     nn.init.kaiming_uniform_(module.weight, mode='fan_in', nonlinearity='relu')
                     if module.bias is not None:
                         nn.init.constant_(module.bias, 0.01)
 
-    def forward(self, x, context_vector, return_attention=False):
+    def forward(self, x, context_vector, return_attention=False, return_auxiliary=False):
         """
         Forward pass of the multi-branch architecture.
         
@@ -269,10 +286,11 @@ class MultiBranchArchitecture(nn.Module):
             context_vector (torch.Tensor): Context vector tensor of shape (batch_size, num_branches, context_vector_size)
                                            or (batch_size, context_vector_size) - will be expanded if needed
             return_attention (bool): Whether to return attention weights
+            return_auxiliary (bool): Whether to return auxiliary predictions (only if use_auxiliary_heads=True)
             
         Returns:
             torch.Tensor: Output tensor of shape (batch_size, output_size)
-            torch.Tensor (optional): Attention weights if return_attention is True
+            dict (optional): Dictionary with 'attention_weights' and/or 'auxiliary_predictions' if requested
         """
         batch_size = x.size(0)
         
@@ -315,6 +333,18 @@ class MultiBranchArchitecture(nn.Module):
         # Shape: (batch_size, num_branches, features)
         stacked_outputs = torch.stack(branch_outputs, dim=1)
         
+        # Compute auxiliary predictions if enabled
+        # During training, always compute if auxiliary heads are enabled (for loss calculation)
+        # During evaluation, only compute if explicitly requested
+        auxiliary_predictions = None
+        should_compute_auxiliary = self.use_auxiliary_heads and (self.training or return_auxiliary)
+        if should_compute_auxiliary:
+            auxiliary_predictions = []
+            for i, branch_output in enumerate(branch_outputs):
+                aux_pred = self.auxiliary_heads[i](branch_output)
+                auxiliary_predictions.append(aux_pred)
+            auxiliary_predictions = torch.stack(auxiliary_predictions, dim=1)  # (batch_size, num_branches, output_size)
+        
         # Apply attention to combine branch outputs
         if return_attention:
             attended_features, attention_weights = self.attention(stacked_outputs, return_weights=True)
@@ -324,8 +354,16 @@ class MultiBranchArchitecture(nn.Module):
         # Final prediction
         output = self.prediction_head(attended_features)
         
+        # Prepare return values
+        return_dict = {}
         if return_attention:
-            return output, attention_weights
+            return_dict['attention_weights'] = attention_weights
+        if auxiliary_predictions is not None:
+            # Return auxiliary predictions if computed (during training or if explicitly requested)
+            return_dict['auxiliary_predictions'] = auxiliary_predictions
+        
+        if return_dict:
+            return output, return_dict
         return output
     
     def __str__(self):

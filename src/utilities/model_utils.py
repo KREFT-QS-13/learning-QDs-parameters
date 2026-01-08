@@ -93,14 +93,43 @@ def divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, ra
 
     return train_loader, val_loader, test_loader
 
-def calculate_loss(criterion, outputs, targets, regularization_coeff=0.0, reduction='mean'):
-    loss = criterion(outputs, targets)
-    return loss
+def calculate_loss(criterion, outputs, targets,
+                   auxiliary_predictions=None, auxiliary_loss_weight=0.3):
+    """
+    Calculate loss with optional auxiliary heads loss.
+    
+    Args:
+        criterion: Loss function (e.g., nn.MSELoss())
+        outputs: Main model predictions (batch_size, output_size)
+        targets: Ground truth targets (batch_size, output_size)
+        auxiliary_predictions: Optional auxiliary predictions (batch_size, num_branches, output_size)
+        auxiliary_loss_weight: Weight for auxiliary loss (default: 0.3)
+    
+    Returns:
+        torch.Tensor: Total loss
+    """
+    # Main loss
+    main_loss = criterion(outputs, targets)
+    
+    # Auxiliary losses (one per branch)
+    auxiliary_loss = 0.0
+    if auxiliary_predictions is not None:
+        num_branches = auxiliary_predictions.shape[1]
+        for i in range(num_branches):
+            branch_pred = auxiliary_predictions[:, i, :]  # (batch_size, output_size)
+            branch_loss = criterion(branch_pred, targets)
+            auxiliary_loss += branch_loss
+        auxiliary_loss = auxiliary_loss / num_branches  # Average over branches
+    
+    # Total loss
+    total_loss = main_loss + auxiliary_loss_weight * auxiliary_loss
+    
+    return total_loss, main_loss, auxiliary_loss
 
-def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Tensor, context:torch.Tensor, outputs:torch.Tensor, save_dir:str, batch_size:int, epochs:int, learning_rate:float, val_split:float, test_split:float, random_state:int, epsilon:float, regularization_coeff:float):
+def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Tensor, context:torch.Tensor, outputs:torch.Tensor, save_dir:str, batch_size:int, epochs:int, learning_rate:float, val_split:float, test_split:float, random_state:int, epsilon:float):
     """Train, evaluate, and save multiple models based on the given configurations."""
     print("\n\n--------- START TRAINING ---------")
-    trained_model, history, test_loader = train_model(model, imgs, context, outputs, batch_size, epochs, learning_rate, val_split, test_split, random_state, epsilon, regularization_coeff)
+    trained_model, history, test_loader = train_model(model, imgs, context, outputs, batch_size, epochs, learning_rate, val_split, test_split, random_state, epsilon)
         
     # Final test of the model
     test_loss, global_test_accuracy, local_test_accuracy, test_mse, predictions, vec_local_test_accuracy = evaluate_model(trained_model, test_loader, epsilon=epsilon)
@@ -214,7 +243,6 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
                 'test_split': test_split,
                 'random_state': random_state,
                 'epsilon': epsilon,
-                'regularization_coeff': regularization_coeff,
                 'init_weights': None  # Add init_weights field
             },
             'history': {k: v for k, v in history.items() if k != 'L2 norm'},
@@ -239,7 +267,7 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
 
 def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learning_rate=0.001, val_split=0.2, 
                 test_split=0.1, random_state=42, epsilon=1.0, init_weights=None, 
-                criterion=nn.MSELoss(), regularization_coeff=0.0, device=DEVICE):
+                criterion=nn.MSELoss(), device=DEVICE):
     '''
         Train a model on the given data and hyperparameters.
         
@@ -306,8 +334,19 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
                 # Expand to (batch_size, num_branches, context_vector_size) - same context for all branches
                 num_branches = imgs_batch.shape[1]
                 context_batch = context_batch.unsqueeze(1).expand(-1, num_branches, -1)
-            outputs = model(imgs_batch, context_batch)
-            loss = calculate_loss(criterion, outputs, targets, regularization_coeff)
+            
+            # Forward pass with auxiliary predictions if enabled
+            # During training, auxiliary predictions are automatically computed if use_auxiliary_heads is True
+            forward_result = model(imgs_batch, context_batch)
+            if isinstance(forward_result, tuple):
+                outputs, return_dict = forward_result
+                auxiliary_predictions = return_dict.get('auxiliary_predictions', None)
+            else:
+                outputs = forward_result
+                auxiliary_predictions = None
+            
+            # Calculate loss with auxiliary heads
+            loss, main_loss, auxiliary_loss = calculate_loss(criterion, outputs, targets, auxiliary_predictions,model.auxiliary_loss_weight if model.use_auxiliary_heads else 0.0)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # Gradient clipping
             optimizer.step()
@@ -354,7 +393,7 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
         history['train_mse'].append(train_mse)
 
         # Validation step:
-        val_loss, global_val_acc, local_val_acc, val_mse, _, vec_local_val_acc = evaluate_model(model, val_loader, criterion, epsilon, regularization_coeff)
+        val_loss, global_val_acc, local_val_acc, val_mse, _, vec_local_val_acc = evaluate_model(model, val_loader, criterion, epsilon)
         history['val_losses'].append(val_loss)
         history['val_accuracies'].append([global_val_acc, local_val_acc])
         history['vec_local_val_accuracy'].append(vec_local_val_acc)
@@ -369,13 +408,42 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
                 if context_batch.dim() == 2:
                     num_branches = imgs_batch.shape[1]
                     context_batch = context_batch.unsqueeze(1).expand(-1, num_branches, -1)
-                outputs = model(imgs_batch, context_batch)
+                forward_result = model(imgs_batch, context_batch)
+                if isinstance(forward_result, tuple):
+                    outputs, _ = forward_result
+                else:
+                    outputs = forward_result
                 loss = criterion(outputs, targets)
                 batch_size = outputs.shape[0]
                 train_loss_eval_mode += loss.item() * batch_size
                 train_samples_eval += batch_size
             
             train_loss_eval_mode = train_loss_eval_mode / train_samples_eval if train_samples_eval > 0 else 0
+
+            if epoch % 5 == 0:
+                imgs_batch, context_batch, targets = next(iter(val_loader))
+                if context_batch.dim() == 2:
+                    num_branches = imgs_batch.shape[1]
+                    context_batch = context_batch.unsqueeze(1).expand(-1, num_branches, -1)
+                
+                # Get outputs and return dictionary
+                forward_result = model(imgs_batch, context_batch, return_attention=True, return_auxiliary=True)
+                if isinstance(forward_result, tuple):
+                    outputs, return_dict = forward_result
+                    attention_weights = return_dict.get('attention_weights', None)
+                else:
+                    attention_weights = None
+
+                if attention_weights is not None:
+                    if attention_weights.dim() == 3:
+                        # PMA: (batch, heads, branches) - average over heads
+                        attention_weights = attention_weights.mean(dim=1)
+                    
+                    avg_attention_weights = attention_weights.mean(dim=0).detach().cpu().numpy()
+                    print(f"  Branch attention weights: {avg_attention_weights}")
+                    print(f"  Attention entropy: {-np.sum(avg_attention_weights * np.log(avg_attention_weights + 1e-10)):.4f}")
+                else:
+                    print(f"  Could not retrieve attention weights")
         model.train()  # Set back to train mode
 
         # Update learning rate scheduler
@@ -383,6 +451,7 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
         current_lr = optimizer.param_groups[0]['lr']
 
         print(f"Epoch {epoch+1}/{epochs}: Tr. Loss: {avg_train_loss:.5f}, Val. Loss: {val_loss:.5f}, LR: {current_lr:.6f}")
+        print(f"{'':<11} Tr. Main Loss: {main_loss:.5f}, Auxiliary Loss: {auxiliary_loss:.5f}")
         print(f"{'':<11} Tr. Acc.: {global_train_acc}% ({local_train_acc}%), "
               f"Val. Acc.: {global_val_acc}% ({local_val_acc}%)")
         print(f"{'':<11} Vec. Tr. Local Acc.: {vec_local_train_acc}%")
@@ -397,7 +466,7 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
 
     return model, history, test_loader
 
-def evaluate_model(model, dataloader, criterion=nn.MSELoss(), epsilon=1.0,  regularization_coeff=0.0):
+def evaluate_model(model, dataloader, criterion=nn.MSELoss(), epsilon=1.0):
     model.eval()
 
     total_loss = 0.0
@@ -415,8 +484,15 @@ def evaluate_model(model, dataloader, criterion=nn.MSELoss(), epsilon=1.0,  regu
                 # Expand to (batch_size, num_branches, context_vector_size) - same context for all branches
                 num_branches = imgs_batch.shape[1]
                 context_batch = context_batch.unsqueeze(1).expand(-1, num_branches, -1)
-            outputs = model(imgs_batch, context_batch)
-            loss = calculate_loss(criterion, outputs, targets, regularization_coeff)
+            
+            # Forward pass (auxiliary predictions not needed during evaluation)
+            forward_result = model(imgs_batch, context_batch)
+            if isinstance(forward_result, tuple):
+                outputs, _ = forward_result
+            else:
+                outputs = forward_result
+            # During eval, we only use main loss (no auxiliary loss)
+            loss, main_loss, auxiliary_loss = calculate_loss(criterion, outputs, targets, None, 0.0)
             
             # Accumulate loss weighted by batch size for proper averaging over all samples
             batch_size = outputs.shape[0]
@@ -784,7 +860,6 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
             'batch_size':  train_params.get('batch_size', 'N/A'),
             'epochs':  train_params.get('epochs', 'N/A'),
             'learning_rate':  train_params.get('learning_rate', 'N/A'),
-            'regularization_coeff': train_params.get('regularization_coeff', '0'),
             'criterion': train_params.get('criterion', nn.MSELoss()),
             'epsilon': epsilon,
             'test_accuracy_global': result['global_test_accuracy'],

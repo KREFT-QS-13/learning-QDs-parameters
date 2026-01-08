@@ -83,7 +83,14 @@ def tsem(model_config_path:str, num_dps:int=None):
     # Final prediction head configuration
     final_prediction_head = confs['model']['final_prediction_head']['hidden_dims']
     
+    # Auxiliary heads configuration
+    auxiliary_config = confs['model'].get('auxiliary_heads', {})
+    use_auxiliary_heads = auxiliary_config.get('use_auxiliary_heads', False)
+    auxiliary_loss_weight = auxiliary_config.get('auxiliary_loss_weight', 0.3)
+    
     print(f"Training model {model_name} with {num_branches} branches, {branch_model} as image encoder, and {pooling_method} attention method.")
+    if use_auxiliary_heads:
+        print(f"Auxiliary heads enabled with loss weight: {auxiliary_loss_weight}")
 
     # Check available devices and print type and device name
     if torch.cuda.is_available():
@@ -112,7 +119,9 @@ def tsem(model_config_path:str, num_dps:int=None):
                                     final_prediction_head=final_prediction_head,
                                     output_size=output_size,
                                     context_embedding_dim=context_embedding_dim,
-                                    context_hidden_dims=context_hidden_dims)
+                                    context_hidden_dims=context_hidden_dims,
+                                    use_auxiliary_heads=use_auxiliary_heads,
+                                    auxiliary_loss_weight=auxiliary_loss_weight)
     
     print(f"""Detailed model parameters: 
     - name: {model_name}
@@ -175,7 +184,6 @@ def tsem(model_config_path:str, num_dps:int=None):
     test_split = confs['train']['test_split']
     random_state = confs['train']['random_state']
     epsilon = confs['train']['epsilon']
-    regularization_coeff = confs['train']['regularization_coeff']
 
     # Determine device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -193,8 +201,7 @@ def tsem(model_config_path:str, num_dps:int=None):
         val_split=val_split,
         test_split=test_split,
         random_state=random_state,
-        epsilon=epsilon,
-        regularization_coeff=regularization_coeff
+        epsilon=epsilon
     )
 
     print("Training, evaluation, and saving complete!")
