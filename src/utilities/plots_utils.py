@@ -2,6 +2,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
+from scipy.stats import pearsonr
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 import src.utilities.utils as u
 
 def exp1_plot_mse_mae_r2(csv_path:str, system_name:str, output_path:str='Results/Figs', cmap:str='viridis', r2_amplitude:float=1e5, r2_scale:int=0.05, 
@@ -168,26 +170,31 @@ def exp1_plot_mse_mae_r2(csv_path:str, system_name:str, output_path:str='Results
     else:
         plt.show() 
 
-def plot_prediction_vs_true_elementwise(targets, outputs, save_dir, figsize_per_subplot=(5, 5), 
-                                         max_cols=4, alpha=0.5, s=10):
+def plot_prediction_vs_true_matrix_elements(targets, outputs, save_dir, 
+                                             figsize_per_subplot=(6, 6), 
+                                             alpha=0.6, s=20, 
+                                             plotname:str='prediction_vs_true_matrix_elements',
+                                             add_diagonal=True,
+                                             show_metrics=True):
     """
-    Create element-wise scatter plots of predicted vs true values.
-    Each output dimension gets its own subplot showing predicted vs true values.
+    Create element-wise scatter plots of predicted vs true values for each matrix element.
+    Assumes the output represents a square matrix (e.g., capacitance matrix).
+    For each matrix element (i,j), plots all predictions vs true values across all samples.
     
     Args:
-        targets (np.array): True values, shape (N, output_dim) where N is number of samples
+        targets (np.array): True values, shape (N, output_dim) where output_dim = num_dots^2
         outputs (np.array): Predicted values, shape (N, output_dim)
-        save_dir (str): Directory to save the plot
+        save_dir (str): Directory to save the plot (None to display)
         figsize_per_subplot (tuple): Figure size per subplot (width, height)
-        max_cols (int): Maximum number of columns in the subplot grid
         alpha (float): Transparency of scatter points (0-1)
         s (float): Size of scatter points
+        plotname (str): Name for the saved plot file
+        add_diagonal (bool): Whether to add diagonal reference line (y=x)
+        show_metrics (bool): Whether to show metrics in title (Pearson, R², MSE, MAE)
     
     Returns:
         None
     """
-    u.ensure_dir_exists(save_dir)
-    
     # Ensure inputs are numpy arrays
     targets = np.array(targets).squeeze()
     outputs = np.array(outputs).squeeze()
@@ -201,15 +208,104 @@ def plot_prediction_vs_true_elementwise(targets, outputs, save_dir, figsize_per_
     
     num_samples, output_dim = targets.shape
     
-    # Calculate grid dimensions
-    num_cols = min(max_cols, output_dim)
-    num_rows = int(np.ceil(output_dim / num_cols))
+    # Calculate grid dimensions, always square matrix
+    num_dots = int(np.sqrt(output_dim))
+    if num_dots * num_dots != output_dim:
+        raise ValueError(f"Output dimension {output_dim} is not a perfect square. "
+                        f"Expected output_dim = num_dots^2 for a square matrix.")
+    
+    # Reshape to matrix form: (num_samples, num_dots, num_dots)
+    targets_matrix = targets.reshape(num_samples, num_dots, num_dots)
+    outputs_matrix = outputs.reshape(num_samples, num_dots, num_dots)
     
     # Create figure with appropriate size
-    fig_width = figsize_per_subplot[0] * num_cols
-    fig_height = figsize_per_subplot[1] * num_rows
-    fig, axes = plt.subplots(num_rows, num_cols, figsize=(fig_width, fig_height))
+    fig_width = figsize_per_subplot[0] * num_dots
+    fig_height = figsize_per_subplot[1] * num_dots
+    fig, axes = plt.subplots(num_dots, num_dots, figsize=(fig_width, fig_height))
     
-    #TODO :  preprocess the data into (num_dots,num_dots,2,N) ,then for loop through each dot and plot the scatter plot for each element of the 3x3 matrix
-    # add pearson correlation coefficient to the title    
+    # Handle case where num_dots == 1
+    if num_dots == 1:
+        axes = np.array([[axes]])
+    
+    # Define better colors
+    scatter_color = '#2E86AB'  # Nice blue color
+    diagonal_color = '#D62828'  # Red for diagonal line
+    edge_color = '#1B263B'  # Dark blue/black for edges
+    
+    # Plot each matrix element
+    for i in range(num_dots):
+        for j in range(num_dots):
+            ax = axes[i, j]
+            
+            # Extract all predictions and true values for this matrix element
+            true_vals = targets_matrix[:, i, j]
+            pred_vals = outputs_matrix[:, i, j]
+            
+            # Create scatter plot
+            ax.scatter(true_vals, pred_vals, alpha=alpha, s=s, 
+                      c=scatter_color, edgecolors=edge_color, 
+                      linewidth=0.5, zorder=2)
+            
+            # Calculate metrics
+            pearson_corr, pearson_p = pearsonr(true_vals, pred_vals)
+            
+            if show_metrics:
+                r2 = r2_score(true_vals, pred_vals)
+                mse = mean_squared_error(true_vals, pred_vals)
+                mae = mean_absolute_error(true_vals, pred_vals)
+                
+                # Create title with metrics
+                title = f'Element ({i},{j})\n'
+                title += f'Pearson: {pearson_corr:.3f} | R²: {r2:.3f}\n'
+                title += f'MSE: {mse:.4f} | MAE: {mae:.4f}'
+            else:
+                title = f'Element ({i},{j})\nPearson: {pearson_corr:.3f}'
+            
+            # Increase font sizes for better readability
+            ax.set_title(title, fontsize=12, fontweight='bold', pad=2)
+            ax.set_xlabel('True Value', fontsize=11, fontweight='medium')
+            ax.set_ylabel('Predicted Value', fontsize=11, fontweight='medium')
+            
+            # Increase tick label font size
+            ax.tick_params(axis='both', which='major', labelsize=10)
+            ax.tick_params(axis='both', which='minor', labelsize=8)
+            
+            # Add diagonal reference line (y = x) with better visibility
+            if add_diagonal:
+                min_val = min(true_vals.min(), pred_vals.min())
+                max_val = max(true_vals.max(), pred_vals.max())
+                ax.plot([min_val, max_val], [min_val, max_val], 
+                       color=diagonal_color, linestyle='--', linewidth=2.5, 
+                       alpha=0.85, label='Perfect prediction', zorder=1)
+                ax.legend(fontsize=9, loc='upper left', framealpha=0.9, 
+                         edgecolor='gray', fancybox=True)
+            
+            # Add grid with better visibility
+            ax.grid(True, alpha=0.4, linestyle='--', linewidth=0.8, 
+                   color='gray', zorder=0)
+            
+            # Set equal aspect ratio for better visualization
+            ax.set_aspect('equal', adjustable='box')
+            
+            # Add subtle background color for better contrast
+            ax.set_facecolor('#FAFAFA')
+    
+    # Add overall title with larger font
+    fig.suptitle(f'Predicted vs True Values for Each Matrix Element \n MSE={mean_squared_error(targets, outputs):.4f}, MAE={mean_absolute_error(targets, outputs):.4f}, R2={r2_score(targets, outputs):.4f}', 
+                 fontsize=18, fontweight='bold', y=0.945)
+    
+    # Adjust spacing for better readability
+    plt.tight_layout(rect=[0, 0, 1, 0.98], pad=2.0)
+    
+    # Save or display
+    if save_dir is not None:
+        u.ensure_dir_exists(save_dir)
+        output_path = save_dir + f'/{plotname}.png'
+        plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close()
+        print(f"Matrix element-wise prediction plot saved to {output_path}")
+    else:
+        plt.show()
+
+
  
