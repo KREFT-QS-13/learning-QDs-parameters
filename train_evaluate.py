@@ -175,7 +175,9 @@ def tsem(model_config_path:str, num_dps:int=None):
     test_split = confs['train']['test_split']
     random_state = confs['train']['random_state']
     epsilon = confs['train']['epsilon']
-    regularization_coeff = confs['train']['regularization_coeff']
+    # New loss function parameters
+    reg_coeff_diag = confs['train'].get('reg_coeff_diag', 0.1)
+    reg_coeff_off = confs['train'].get('reg_coeff_off', 1.0)
 
     # Determine device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -194,7 +196,8 @@ def tsem(model_config_path:str, num_dps:int=None):
         test_split=test_split,
         random_state=random_state,
         epsilon=epsilon,
-        regularization_coeff=regularization_coeff
+        reg_coeff_diag=reg_coeff_diag,
+        reg_coeff_off=reg_coeff_off
     )
 
     print("Training, evaluation, and saving complete!")
