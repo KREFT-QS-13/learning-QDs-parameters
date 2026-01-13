@@ -91,7 +91,7 @@ def divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, ra
     test_dataset = TensorDataset(imgs_test, context_test, outputs_test)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-    return train_loader, val_loader, test_loader
+    return train_loader, val_loader, test_loader, train_indices, val_indices, test_indices
 
 def calculate_loss(criterion, outputs, targets, reg_coeff_diag=0.1, reg_coeff_off=1.0):
     """
@@ -197,9 +197,9 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
             branch_model = 'cnn'
             base_model = 'cnn'
         
-        # Try to get dropout from prediction head or branch
-        if hasattr(model, 'prediction_head'):
-            for layer in model.prediction_head:
+        # Try to get dropout from prediction heads or branch
+        if hasattr(model, 'diagonal_head'):
+            for layer in model.diagonal_head:
                 if isinstance(layer, nn.Dropout):
                     dropout = float(layer.p)
                     break
@@ -210,10 +210,10 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
                     dropout = float(layer.p)
                     break
         
-        # Try to get custom head structure from final prediction head
-        if hasattr(model, 'prediction_head'):
+        # Try to get custom head structure from final prediction head (use diagonal head as reference)
+        if hasattr(model, 'diagonal_head'):
             head_layers = []
-            for layer in model.prediction_head:
+            for layer in model.diagonal_head:
                 if isinstance(layer, nn.Linear):
                     head_layers.append(int(layer.out_features))
             if head_layers:
@@ -299,7 +299,7 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
     # move model to GPU
     model = model.to(device)
 
-    train_loader, val_loader, test_loader = divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, random_state, device)
+    train_loader, val_loader, test_loader, _, _, _ = divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, random_state, device)
 
     # Define loss function, optimizer and learning rate scheduler
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5) # test also AdamW
@@ -428,6 +428,7 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
         current_lr = optimizer.param_groups[0]['lr']
 
         print(f"Epoch {epoch+1}/{epochs}: Tr. Loss: {avg_train_loss:.5f}, Val. Loss: {val_loss:.5f}, LR: {current_lr:.6f}")
+        print(f"Reg. Coeff. Diag: {reg_coeff_diag}, Reg. Coeff. Off: {reg_coeff_off}")
         print(f"{'':<11} Tr. Acc.: {global_train_acc}% ({local_train_acc}%), "
               f"Val. Acc.: {global_val_acc}% ({local_val_acc}%)")
         print(f"{'':<11} Vec. Tr. Local Acc.: {vec_local_train_acc}%")
