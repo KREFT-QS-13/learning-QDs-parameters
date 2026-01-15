@@ -194,7 +194,8 @@ def tsem(model_config_path:str, num_dps:int=None):
         test_split=test_split,
         random_state=random_state,
         epsilon=epsilon,
-        regularization_coeff=regularization_coeff
+        regularization_coeff=regularization_coeff,
+        normalization_stats=normalization_stats if use_normalization else None
     )
 
     print("Training, evaluation, and saving complete!")

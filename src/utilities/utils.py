@@ -903,3 +903,61 @@ def ensure_dir_exists(directory: str) -> None:
     if directory:  # Only create if directory path is not empty
         os.makedirs(directory, exist_ok=True)
 
+def abs_standardize_transform(data: np.ndarray, epsilon: float = 1e-8) -> np.ndarray:
+    """
+    Apply absolute value, log transformation, followed by standardization.
+    
+    Parameters
+    ----------
+    data : np.ndarray
+        Input data of shape (N, features) or any shape
+    epsilon : float
+        Small value to add before log to avoid log(0)
+    
+    Returns
+    -------
+        - transformed_data: Standardized absolute values
+        
+    """
+    # Take absolute value
+    data_abs = np.log(np.abs(data)+epsilon)
+    
+    mean = np.mean(data_abs, axis=0, keepdims=True)
+    std = np.std(data_abs, axis=0, keepdims=True)
+    
+    # Standardize (avoid division by zero)
+    std_safe = np.where(std == 0, 1.0, std)
+    transformed = (data_abs - mean) / std_safe
+    
+    return transformed
+
+def abs_standardize_inverse_transform(transformed_data: np.ndarray, epsilon: float = 1e-8) -> np.ndarray:
+    """
+    Reverse the absolute value + standardization transformation.
+    
+    Note: The absolute value operation is not fully reversible (sign information is lost).
+    This function reverses the standardization, returning the absolute values.
+    
+    Parameters
+    ----------
+    transformed_data : np.ndarray
+        Standardized data (output from abs_standardize_transform)
+
+    
+    Returns
+    -------
+    np.ndarray
+        Reconstructed absolute values (sign information is lost)
+    """
+
+    mean = np.mean(transformed_data, axis=0, keepdims=True)
+    std = np.std(transformed_data, axis=0, keepdims=True)
+    # Reverse standardization
+    std_safe = np.where(std == 0, 1.0, std)
+    data_abs = np.exp(transformed_data * std_safe + mean) - epsilon
+    
+    # Note: We cannot recover the original sign, so we return absolute values
+    # Ensure non-negative (in case of numerical errors)
+    data_abs = np.maximum(data_abs, 0.0)
+    
+    return data_abs
