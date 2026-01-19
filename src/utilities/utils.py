@@ -903,61 +903,46 @@ def ensure_dir_exists(directory: str) -> None:
     if directory:  # Only create if directory path is not empty
         os.makedirs(directory, exist_ok=True)
 
-def abs_standardize_transform(data: np.ndarray, epsilon: float = 1e-8) -> np.ndarray:
+def Z_score_transformation(data: np.ndarray) -> tuple[np.ndarray, np.flaot64, np.float64]:
     """
-    Apply absolute value, log transformation, followed by standardization.
+    Apply Z-score transformation.
     
     Parameters
     ----------
     data : np.ndarray
         Input data of shape (N, features) or any shape
-    epsilon : float
-        Small value to add before log to avoid log(0)
-    
+
     Returns
     -------
-        - transformed_data: Standardized absolute values
+        - transformed_data: Z-scored data
+        - mean: Mean of the data
+        - std: Standard deviation of the data
         
     """
-    # Take absolute value
-    data_abs = np.log(np.abs(data)+epsilon)
+    mean = np.mean(data, axis=0, keepdims=True)
+    std = np.std(data, axis=0, keepdims=True) if std != 0 else 1.0
     
-    mean = np.mean(data_abs, axis=0, keepdims=True)
-    std = np.std(data_abs, axis=0, keepdims=True)
+    transformed = (data - mean) / std
     
-    # Standardize (avoid division by zero)
-    std_safe = np.where(std == 0, 1.0, std)
-    transformed = (data_abs - mean) / std_safe
-    
-    return transformed
+    return transformed, mean, std
 
-def abs_standardize_inverse_transform(transformed_data: np.ndarray, epsilon: float = 1e-8) -> np.ndarray:
+def Z_score_inverse_transform(transformed_data: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
     """
-    Reverse the absolute value + standardization transformation.
-    
-    Note: The absolute value operation is not fully reversible (sign information is lost).
-    This function reverses the standardization, returning the absolute values.
+    Reverse the Z-score transformation.
     
     Parameters
     ----------
     transformed_data : np.ndarray
-        Standardized data (output from abs_standardize_transform)
-
+        Z-scored data (output from Z_score_transformation)
+    mean : np.ndarray
+        Mean of the data
+    std : np.ndarray
+        Standard deviation of the data
     
     Returns
     -------
     np.ndarray
-        Reconstructed absolute values (sign information is lost)
+        Reconstructed data
     """
 
-    mean = np.mean(transformed_data, axis=0, keepdims=True)
-    std = np.std(transformed_data, axis=0, keepdims=True)
-    # Reverse standardization
-    std_safe = np.where(std == 0, 1.0, std)
-    data_abs = np.exp(transformed_data * std_safe + mean) - epsilon
-    
-    # Note: We cannot recover the original sign, so we return absolute values
-    # Ensure non-negative (in case of numerical errors)
-    data_abs = np.maximum(data_abs, 0.0)
-    
-    return data_abs
+    return transformed_data * std + mean
