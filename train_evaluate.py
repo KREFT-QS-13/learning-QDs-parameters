@@ -176,7 +176,7 @@ def tsem(model_config_path:str, num_dps:int=None):
     random_state = confs['train']['random_state']
     epsilon = confs['train']['epsilon']
     regularization_coeff = confs['train']['regularization_coeff']
-
+    use_normalization = confs['train']['use_normalization']
     # Determine device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
@@ -195,7 +195,7 @@ def tsem(model_config_path:str, num_dps:int=None):
         random_state=random_state,
         epsilon=epsilon,
         regularization_coeff=regularization_coeff,
-        normalization_stats=normalization_stats if use_normalization else None
+        use_normalization=use_normalization
     )
 
     print("Training, evaluation, and saving complete!")

@@ -30,7 +30,7 @@ from src.models.multi_branch import MultiBranchArchitecture
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ----------------------------- TRAINING
-def divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, random_state, device=DEVICE):
+def divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, random_state, device=DEVICE, use_normalization=False):
     """
     Split dataset into train/val/test sets and create DataLoaders for MultiBranchArchitecture.
     
@@ -43,9 +43,11 @@ def divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, ra
         test_split: Test split ratio
         random_state: Random state for reproducibility
         device: Device to move tensors to (defaults to DEVICE)
+        use_normalization: Whether to use Z-score normalization
     
     Returns:
         train_loader, val_loader, test_loader: DataLoaders returning (imgs, context, outputs) tuples
+        norm_dict: Dictionary containing the mean and std of the outputs and context for each split
     """
     # Ensure inputs are torch tensors (should already be, but check for safety)
     if not isinstance(imgs, torch.Tensor):
@@ -72,13 +74,30 @@ def divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, ra
     imgs_val = imgs[val_indices].to(device)
     imgs_test = imgs[test_indices].to(device)
     
-    context_train = context[train_indices].to(device)
-    context_val = context[val_indices].to(device)
-    context_test = context[test_indices].to(device)
-     
-    outputs_train = outputs[train_indices].to(device)
-    outputs_val = outputs[val_indices].to(device)
-    outputs_test = outputs[test_indices].to(device)
+    norm_dict = None
+    if use_normalization:
+        outputs_train, outputs_mean, outputs_std = u.Z_score_transformation(outputs[train_indices].to(device))
+        outputs_val, outputs_mean, outputs_std = u.Z_score_transformation(outputs[val_indices].to(device))
+        outputs_test, outputs_mean, outputs_std = u.Z_score_transformation(outputs[test_indices].to(device))
+        
+        context_train, context_mean, context_std = u.Z_score_transformation(context[train_indices].to(device))
+        context_val, context_mean, context_std = u.Z_score_transformation(context[val_indices].to(device))
+        context_test, context_mean, context_std = u.Z_score_transformation(context[test_indices].to(device))
+
+        norm_dict = {
+            'train': [(outputs_mean, outputs_std), (context_mean, context_std)],
+            'val': [(outputs_mean, outputs_std), (context_mean, context_std)],
+            'test': [(outputs_mean, outputs_std), (context_mean, context_std)]
+        }
+    else:
+        outputs_train = outputs[train_indices].to(device)
+        outputs_val = outputs[val_indices].to(device)
+        outputs_test = outputs[test_indices].to(device)
+
+        context_train = context[train_indices].to(device)
+        context_val = context[val_indices].to(device)
+        context_test = context[test_indices].to(device)
+
     
     # Create DataLoader objects
     # Each DataLoader returns (imgs, context, outputs) tuples
@@ -91,16 +110,16 @@ def divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, ra
     test_dataset = TensorDataset(imgs_test, context_test, outputs_test)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-    return train_loader, val_loader, test_loader
+    return train_loader, val_loader, test_loader, norm_dict
 
 def calculate_loss(criterion, outputs, targets, regularization_coeff=0.0, reduction='mean'):
     loss = criterion(outputs, targets)
     return loss
 
-def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Tensor, context:torch.Tensor, outputs:torch.Tensor, save_dir:str, batch_size:int, epochs:int, learning_rate:float, val_split:float, test_split:float, random_state:int, epsilon:float, regularization_coeff:float):
+def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Tensor, context:torch.Tensor, outputs:torch.Tensor, save_dir:str, batch_size:int, epochs:int, learning_rate:float, val_split:float, test_split:float, random_state:int, epsilon:float, regularization_coeff:float, use_normalization:bool):
     """Train, evaluate, and save multiple models based on the given configurations."""
     print("\n\n--------- START TRAINING ---------")
-    trained_model, history, test_loader = train_model(model, imgs, context, outputs, batch_size, epochs, learning_rate, val_split, test_split, random_state, epsilon, regularization_coeff)
+    trained_model, history, test_loader, norm_dict = train_model(model, imgs, context, outputs, batch_size, epochs, learning_rate, val_split, test_split, random_state, epsilon, regularization_coeff, use_normalization)
         
     # Final test of the model
     test_loss, global_test_accuracy, local_test_accuracy, test_mse, predictions, vec_local_test_accuracy = evaluate_model(trained_model, test_loader, epsilon=epsilon)
@@ -215,7 +234,9 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
                 'random_state': random_state,
                 'epsilon': epsilon,
                 'regularization_coeff': regularization_coeff,
-                'init_weights': None  # Add init_weights field
+                'init_weights': None, # Add init_weights field
+                'use_normalization': use_normalization,
+                'norm_dict': norm_dict
             },
             'history': {k: v for k, v in history.items() if k != 'L2 norm'},
             'test_loss': float(test_loss),
@@ -239,7 +260,7 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
 
 def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learning_rate=0.001, val_split=0.2, 
                 test_split=0.1, random_state=42, epsilon=1.0, init_weights=None, 
-                criterion=nn.MSELoss(), regularization_coeff=0.0, device=DEVICE):
+                criterion=nn.MSELoss(), regularization_coeff=0.0, device=DEVICE, use_normalization=False):
     '''
         Train a model on the given data and hyperparameters.
         
@@ -254,7 +275,7 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
     # move model to GPU
     model = model.to(device)
 
-    train_loader, val_loader, test_loader = divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, random_state, device)
+    train_loader, val_loader, test_loader = divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, random_state, device, use_normalization)
 
     # Define loss function, optimizer and learning rate scheduler
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5) # test also AdamW

@@ -920,11 +920,12 @@ def Z_score_transformation(data: np.ndarray) -> tuple[np.ndarray, np.flaot64, np
         
     """
     mean = np.mean(data, axis=0, keepdims=True)
-    std = np.std(data, axis=0, keepdims=True) if std != 0 else 1.0
+    std = np.std(data, axis=0, keepdims=True)
+    std_safe = np.where(std == 0, 1.0, std)
     
-    transformed = (data - mean) / std
+    transformed = (data - mean) / std_safe
     
-    return transformed, mean, std
+    return transformed, mean, std_safe
 
 def Z_score_inverse_transform(transformed_data: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
     """
@@ -944,5 +945,6 @@ def Z_score_inverse_transform(transformed_data: np.ndarray, mean: np.ndarray, st
     np.ndarray
         Reconstructed data
     """
+    assert transformed_data.shape == mean.shape == std.shape, "Shape mismatch: transformed_data={transformed_data.shape}, mean={mean.shape}, std={std.shape}"
 
     return transformed_data * std + mean
