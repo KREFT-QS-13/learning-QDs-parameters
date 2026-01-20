@@ -175,7 +175,7 @@ def tsem(model_config_path:str, num_dps:int=None):
     test_split = confs['train']['test_split']
     random_state = confs['train']['random_state']
     epsilon = confs['train']['epsilon']
-    regularization_coeff = confs['train']['regularization_coeff']
+    regularization_coeff = 0.0
     use_normalization = confs['train']['use_normalization']
     # Determine device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

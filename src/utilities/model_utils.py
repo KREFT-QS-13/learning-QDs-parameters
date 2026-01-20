@@ -76,19 +76,27 @@ def divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, ra
     
     norm_dict = None
     if use_normalization:
-        outputs_train, outputs_mean, outputs_std = u.Z_score_transformation(outputs[train_indices].to(device))
-        outputs_val, outputs_mean, outputs_std = u.Z_score_transformation(outputs[val_indices].to(device))
-        outputs_test, outputs_mean, outputs_std = u.Z_score_transformation(outputs[test_indices].to(device))
+        outputs_train, outputs_mean, outputs_std = u.Z_score_transformation(outputs[train_indices].numpy())
+        outputs_val, outputs_mean, outputs_std = u.Z_score_transformation(outputs[val_indices].numpy())
+        outputs_test, outputs_mean, outputs_std = u.Z_score_transformation(outputs[test_indices].numpy())
         
-        context_train, context_mean, context_std = u.Z_score_transformation(context[train_indices].to(device))
-        context_val, context_mean, context_std = u.Z_score_transformation(context[val_indices].to(device))
-        context_test, context_mean, context_std = u.Z_score_transformation(context[test_indices].to(device))
+        context_train, context_mean, context_std = u.Z_score_transformation(context[train_indices].numpy())
+        context_val, context_mean, context_std = u.Z_score_transformation(context[val_indices].numpy())
+        context_test, context_mean, context_std = u.Z_score_transformation(context[test_indices].numpy())
 
         norm_dict = {
             'train': [(outputs_mean, outputs_std), (context_mean, context_std)],
             'val': [(outputs_mean, outputs_std), (context_mean, context_std)],
             'test': [(outputs_mean, outputs_std), (context_mean, context_std)]
         }
+
+        outputs_train = torch.tensor(outputs_train, dtype=torch.float32).to(device)
+        outputs_val = torch.tensor(outputs_val, dtype=torch.float32).to(device)
+        outputs_test = torch.tensor(outputs_test, dtype=torch.float32).to(device)
+
+        context_train = torch.tensor(context_train, dtype=torch.float32).to(device)
+        context_val = torch.tensor(context_val, dtype=torch.float32).to(device)
+        context_test = torch.tensor(context_test, dtype=torch.float32).to(device)
     else:
         outputs_train = outputs[train_indices].to(device)
         outputs_val = outputs[val_indices].to(device)
@@ -119,7 +127,19 @@ def calculate_loss(criterion, outputs, targets, regularization_coeff=0.0, reduct
 def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Tensor, context:torch.Tensor, outputs:torch.Tensor, save_dir:str, batch_size:int, epochs:int, learning_rate:float, val_split:float, test_split:float, random_state:int, epsilon:float, regularization_coeff:float, use_normalization:bool):
     """Train, evaluate, and save multiple models based on the given configurations."""
     print("\n\n--------- START TRAINING ---------")
-    trained_model, history, test_loader, norm_dict = train_model(model, imgs, context, outputs, batch_size, epochs, learning_rate, val_split, test_split, random_state, epsilon, regularization_coeff, use_normalization)
+    trained_model, history, test_loader, norm_dict = train_model(model=model, 
+                                                                 imgs=imgs, 
+                                                                 context=context, 
+                                                                 outputs=outputs, 
+                                                                 batch_size=batch_size, 
+                                                                 epochs=epochs, 
+                                                                 learning_rate=learning_rate, 
+                                                                 val_split=val_split, 
+                                                                 test_split=test_split, 
+                                                                 random_state=random_state, 
+                                                                 epsilon=epsilon, 
+                                                                 regularization_coeff=regularization_coeff, 
+                                                                 use_normalization=use_normalization)
         
     # Final test of the model
     test_loss, global_test_accuracy, local_test_accuracy, test_mse, predictions, vec_local_test_accuracy = evaluate_model(trained_model, test_loader, epsilon=epsilon)
@@ -275,7 +295,7 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
     # move model to GPU
     model = model.to(device)
 
-    train_loader, val_loader, test_loader = divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, random_state, device, use_normalization)
+    train_loader, val_loader, test_loader, dict_norms = divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, random_state, device, use_normalization)
 
     # Define loss function, optimizer and learning rate scheduler
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5) # test also AdamW
@@ -416,7 +436,7 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
               f"Gap due to dropout/BN: {avg_train_loss - train_loss_eval_mode:.5f}")
         print(f"{'':<11} [Diagnostics] Val Loss vs Val MSE diff: {abs(val_loss - val_mse):.6f}")
 
-    return model, history, test_loader
+    return model, history, test_loader, dict_norms
 
 def evaluate_model(model, dataloader, criterion=nn.MSELoss(), epsilon=1.0,  regularization_coeff=0.0):
     model.eval()
