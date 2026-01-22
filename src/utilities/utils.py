@@ -903,7 +903,7 @@ def ensure_dir_exists(directory: str) -> None:
     if directory:  # Only create if directory path is not empty
         os.makedirs(directory, exist_ok=True)
 
-def Z_score_transformation(data: np.ndarray) -> tuple[np.ndarray, np.flaot64, np.float64]:
+def Z_score_transformation(data: np.ndarray) -> tuple[np.ndarray, np.float64, np.float64]:
     """
     Apply Z-score transformation.
     
