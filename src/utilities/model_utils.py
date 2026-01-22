@@ -168,7 +168,7 @@ def calculate_loss(criterion, outputs, targets, reg_coeff_diag=0.1, reg_coeff_of
     
     return loss
 
-def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Tensor, context:torch.Tensor, outputs:torch.Tensor, save_dir:str, batch_size:int, epochs:int, learning_rate:float, val_split:float, test_split:float, random_state:int, epsilon:float, reg_coeff_diag:float, reg_coeff_off:float, use_normalization:bool):
+def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Tensor, context:torch.Tensor, outputs:torch.Tensor, save_dir:str, batch_size:int, epochs:int, learning_rate:float, val_split:float, test_split:float, random_state:int, epsilon:float, reg_coeff_diag:float, reg_coeff_off:float, use_normalization:bool, use_lr_scheduler:bool):
     """Train, evaluate, and save multiple models based on the given configurations."""
     print("\n\n--------- START TRAINING ---------")
     trained_model, history, test_loader, norm_dict = train_model(model=model, 
@@ -184,7 +184,8 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
                                                                  epsilon=epsilon, 
                                                                  reg_coeff_diag=reg_coeff_diag, 
                                                                  reg_coeff_off=reg_coeff_off, 
-                                                                 use_normalization=use_normalization)
+                                                                 use_normalization=use_normalization, 
+                                                                 use_lr_scheduler=use_lr_scheduler)
         
     # Final test of the model
     test_loss, global_test_accuracy, local_test_accuracy, test_mse, predictions, vec_local_test_accuracy = evaluate_model(trained_model, test_loader, epsilon=epsilon)
@@ -326,7 +327,7 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
 
 def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learning_rate=0.001, val_split=0.2, 
                 test_split=0.1, random_state=42, epsilon=1.0, init_weights=None, 
-                criterion=nn.MSELoss(), reg_coeff_diag=0.1, reg_coeff_off=1.0, device=DEVICE, use_normalization=False):
+                criterion=nn.MSELoss(), reg_coeff_diag=0.1, reg_coeff_off=1.0, device=DEVICE, use_normalization=False, use_lr_scheduler=False):
     '''
         Train a model on the given data and hyperparameters.
         
@@ -345,7 +346,10 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
 
     # Define loss function, optimizer and learning rate scheduler
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5) # test also AdamW
-    lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)    
+    if use_lr_scheduler:    
+        lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)    
+    else:
+        lr_scheduler = None
 
     # Add early stopping
     best_val_loss = float('inf')
@@ -466,8 +470,11 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
         model.train()  # Set back to train mode
 
         # Update learning rate scheduler
-        lr_scheduler.step(val_loss) 
-        current_lr = optimizer.param_groups[0]['lr']
+        if use_lr_scheduler:
+            lr_scheduler.step(val_loss) 
+            current_lr = optimizer.param_groups[0]['lr']
+        else:
+            current_lr = learning_rate
 
         print(f"Epoch {epoch+1}/{epochs}: Tr. Loss: {avg_train_loss:.5f}, Val. Loss: {val_loss:.5f}, LR: {current_lr:.6f}")
         print(f"Reg. Coeff. Diag: {reg_coeff_diag}, Reg. Coeff. Off: {reg_coeff_off}")
