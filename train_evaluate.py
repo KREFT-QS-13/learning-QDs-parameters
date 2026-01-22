@@ -81,7 +81,19 @@ def tsem(model_config_path:str, num_dps:int=None):
     num_attention_heads = attention['num_heads']
     
     # Final prediction head configuration
-    final_prediction_head = confs['model']['final_prediction_head']['hidden_dims']
+    # Check if separate configurations for diagonal and off-diagonal heads are provided
+    if 'diagonal_head' in confs['model'] and 'off_diagonal_head' in confs['model']:
+        # Separate configurations for each head
+        diagonal_head_config = confs['model']['diagonal_head'].get('hidden_dims', None)
+        off_diagonal_head_config = confs['model']['off_diagonal_head'].get('hidden_dims', None)
+        final_prediction_head = None  # Not used when separate configs are provided
+        print(f"Using separate configurations for diagonal and off-diagonal heads.")
+    else:
+        # Fallback to shared configuration
+        final_prediction_head = confs['model']['final_prediction_head']['hidden_dims']
+        diagonal_head_config = None
+        off_diagonal_head_config = None
+        print(f"Using shared configuration for both prediction heads.")
     
     print(f"Training model {model_name} with {num_branches} branches, {branch_model} as image encoder, and {pooling_method} attention method.")
 
@@ -110,6 +122,8 @@ def tsem(model_config_path:str, num_dps:int=None):
                                     num_attention_heads=num_attention_heads,
                                     branch_embedding_dim=branch_embedding_dim,
                                     final_prediction_head=final_prediction_head,
+                                    diagonal_head_config=diagonal_head_config,
+                                    off_diagonal_head_config=off_diagonal_head_config,
                                     output_size=output_size,
                                     context_embedding_dim=context_embedding_dim,
                                     context_hidden_dims=context_hidden_dims)
@@ -140,7 +154,9 @@ def tsem(model_config_path:str, num_dps:int=None):
     - num_heads: {num_attention_heads}
     
     Final Prediction Head:
-    - hidden_dims: {final_prediction_head}""")
+    - shared hidden_dims: {final_prediction_head if final_prediction_head is not None else 'N/A (using separate configs)'}
+    - diagonal_head hidden_dims: {diagonal_head_config if diagonal_head_config is not None else 'N/A (using shared config)'}
+    - off_diagonal_head hidden_dims: {off_diagonal_head_config if off_diagonal_head_config is not None else 'N/A (using shared config)'}""")
 
     # Count parameters per branch
     print("\nModel parameters breakdown:")
@@ -157,11 +173,17 @@ def tsem(model_config_path:str, num_dps:int=None):
         attn_trainable = sum(p.numel() for p in model.attention.parameters() if p.requires_grad)
         print(f"  Attention module: {attn_total:,} (Trainable: {attn_trainable:,})")
     
-    # Count final prediction head parameters
-    if hasattr(model, 'prediction_head'):
-        head_total = sum(p.numel() for p in model.prediction_head.parameters())
-        head_trainable = sum(p.numel() for p in model.prediction_head.parameters() if p.requires_grad)
-        print(f"  Final prediction head: {head_total:,} (Trainable: {head_trainable:,})")
+    # Count final prediction head parameters (diagonal + off-diagonal heads)
+    if hasattr(model, 'diagonal_head') and hasattr(model, 'off_diagonal_head'):
+        diag_head_total = sum(p.numel() for p in model.diagonal_head.parameters())
+        diag_head_trainable = sum(p.numel() for p in model.diagonal_head.parameters() if p.requires_grad)
+        off_diag_head_total = sum(p.numel() for p in model.off_diagonal_head.parameters())
+        off_diag_head_trainable = sum(p.numel() for p in model.off_diagonal_head.parameters() if p.requires_grad)
+        head_total = diag_head_total + off_diag_head_total
+        head_trainable = diag_head_trainable + off_diag_head_trainable
+        print(f"  Final prediction heads (diagonal + off-diagonal): {head_total:,} (Trainable: {head_trainable:,})")
+        print(f"    - Diagonal head: {diag_head_total:,} (Trainable: {diag_head_trainable:,})")
+        print(f"    - Off-diagonal head: {off_diag_head_total:,} (Trainable: {off_diag_head_trainable:,})")
     
     # Total parameters
     total_params = sum(p.numel() for p in model.parameters())
@@ -175,7 +197,10 @@ def tsem(model_config_path:str, num_dps:int=None):
     test_split = confs['train']['test_split']
     random_state = confs['train']['random_state']
     epsilon = confs['train']['epsilon']
-    regularization_coeff = 0.0
+    # New loss function parameters
+    reg_coeff_diag = confs['train'].get('reg_coeff_diag', 0.1)
+    reg_coeff_off = confs['train'].get('reg_coeff_off', 1.0)
+
     use_normalization = confs['train']['use_normalization']
     # Determine device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -194,7 +219,8 @@ def tsem(model_config_path:str, num_dps:int=None):
         test_split=test_split,
         random_state=random_state,
         epsilon=epsilon,
-        regularization_coeff=regularization_coeff,
+        reg_coeff_diag=reg_coeff_diag,
+        reg_coeff_off=reg_coeff_off,
         use_normalization=use_normalization
     )
 

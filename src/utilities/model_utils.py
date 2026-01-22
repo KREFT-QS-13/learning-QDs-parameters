@@ -120,11 +120,55 @@ def divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, ra
 
     return train_loader, val_loader, test_loader, norm_dict
 
-def calculate_loss(criterion, outputs, targets, regularization_coeff=0.0, reduction='mean'):
-    loss = criterion(outputs, targets)
+def calculate_loss(criterion, outputs, targets, reg_coeff_diag=0.1, reg_coeff_off=1.0):
+    """
+    Calculate loss with different coefficients for diagonal and off-diagonal elements.
+    Assumes outputs represent a flattened square matrix (e.g., 3x3 = 9 elements).
+    If output_dim is not a perfect square, treats all elements with reg_coeff_off.
+    
+    Args:
+        criterion: Loss function (e.g., nn.MSELoss())
+        outputs: Predicted values, shape (batch_size, output_dim)
+        targets: True values, shape (batch_size, output_dim)
+        reg_coeff_diag: Coefficient for diagonal elements (default: 0.1)
+        reg_coeff_off: Coefficient for off-diagonal elements (default: 1.0)
+    
+    Returns:
+        Combined loss with different weights for diagonal and off-diagonal elements
+    """
+    outputs_dim = outputs.shape[1]
+    
+    # Check if output_dim is a perfect square (represents a square matrix)
+    matrix_size = int(np.sqrt(outputs_dim))
+    is_square_matrix = (matrix_size * matrix_size == outputs_dim)
+    
+    if is_square_matrix and matrix_size > 1:
+        # Reshape to (batch_size, matrix_size, matrix_size)
+        outputs_reshaped = outputs.view(-1, matrix_size, matrix_size)
+        targets_reshaped = targets.view(-1, matrix_size, matrix_size)
+        
+        # Extract diagonal elements: (batch_size, matrix_size)
+        outputs_diag = torch.diagonal(outputs_reshaped, dim1=1, dim2=2)
+        targets_diag = torch.diagonal(targets_reshaped, dim1=1, dim2=2)
+        
+        # Extract off-diagonal elements
+        # Create mask for off-diagonal elements
+        mask = ~torch.eye(matrix_size, dtype=torch.bool, device=outputs.device)
+        outputs_off = outputs_reshaped[:, mask]
+        targets_off = targets_reshaped[:, mask]
+        
+        # Calculate losses
+        loss_diag = reg_coeff_diag * criterion(outputs_diag, targets_diag)
+        loss_off = reg_coeff_off * criterion(outputs_off, targets_off)
+        loss = loss_diag + loss_off
+    else:
+        # If not a square matrix, apply reg_coeff_off to all elements
+        # or treat as if all are off-diagonal
+        loss = reg_coeff_off * criterion(outputs, targets)
+    
     return loss
 
-def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Tensor, context:torch.Tensor, outputs:torch.Tensor, save_dir:str, batch_size:int, epochs:int, learning_rate:float, val_split:float, test_split:float, random_state:int, epsilon:float, regularization_coeff:float, use_normalization:bool):
+def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Tensor, context:torch.Tensor, outputs:torch.Tensor, save_dir:str, batch_size:int, epochs:int, learning_rate:float, val_split:float, test_split:float, random_state:int, epsilon:float, reg_coeff_diag:float, reg_coeff_off:float, use_normalization:bool):
     """Train, evaluate, and save multiple models based on the given configurations."""
     print("\n\n--------- START TRAINING ---------")
     trained_model, history, test_loader, norm_dict = train_model(model=model, 
@@ -138,7 +182,8 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
                                                                  test_split=test_split, 
                                                                  random_state=random_state, 
                                                                  epsilon=epsilon, 
-                                                                 regularization_coeff=regularization_coeff, 
+                                                                 reg_coeff_diag=reg_coeff_diag, 
+                                                                 reg_coeff_off=reg_coeff_off, 
                                                                  use_normalization=use_normalization)
         
     # Final test of the model
@@ -192,9 +237,9 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
             branch_model = 'cnn'
             base_model = 'cnn'
         
-        # Try to get dropout from prediction head or branch
-        if hasattr(model, 'prediction_head'):
-            for layer in model.prediction_head:
+        # Try to get dropout from prediction heads or branch
+        if hasattr(model, 'diagonal_head'):
+            for layer in model.diagonal_head:
                 if isinstance(layer, nn.Dropout):
                     dropout = float(layer.p)
                     break
@@ -205,10 +250,10 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
                     dropout = float(layer.p)
                     break
         
-        # Try to get custom head structure from final prediction head
-        if hasattr(model, 'prediction_head'):
+        # Try to get custom head structure from final prediction head (use diagonal head as reference)
+        if hasattr(model, 'diagonal_head'):
             head_layers = []
-            for layer in model.prediction_head:
+            for layer in model.diagonal_head:
                 if isinstance(layer, nn.Linear):
                     head_layers.append(int(layer.out_features))
             if head_layers:
@@ -253,7 +298,8 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
                 'test_split': test_split,
                 'random_state': random_state,
                 'epsilon': epsilon,
-                'regularization_coeff': regularization_coeff,
+                'reg_coeff_diag': reg_coeff_diag,
+                'reg_coeff_off': reg_coeff_off,
                 'init_weights': None, # Add init_weights field
                 'use_normalization': use_normalization,
                 'norm_dict': norm_dict
@@ -280,7 +326,7 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
 
 def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learning_rate=0.001, val_split=0.2, 
                 test_split=0.1, random_state=42, epsilon=1.0, init_weights=None, 
-                criterion=nn.MSELoss(), regularization_coeff=0.0, device=DEVICE, use_normalization=False):
+                criterion=nn.MSELoss(), reg_coeff_diag=0.1, reg_coeff_off=1.0, device=DEVICE, use_normalization=False):
     '''
         Train a model on the given data and hyperparameters.
         
@@ -348,7 +394,7 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
                 num_branches = imgs_batch.shape[1]
                 context_batch = context_batch.unsqueeze(1).expand(-1, num_branches, -1)
             outputs = model(imgs_batch, context_batch)
-            loss = calculate_loss(criterion, outputs, targets, regularization_coeff)
+            loss = calculate_loss(criterion, outputs, targets, reg_coeff_diag, reg_coeff_off)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # Gradient clipping
             optimizer.step()
@@ -395,7 +441,7 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
         history['train_mse'].append(train_mse)
 
         # Validation step:
-        val_loss, global_val_acc, local_val_acc, val_mse, _, vec_local_val_acc = evaluate_model(model, val_loader, criterion, epsilon, regularization_coeff)
+        val_loss, global_val_acc, local_val_acc, val_mse, _, vec_local_val_acc = evaluate_model(model, val_loader, criterion, epsilon, reg_coeff_diag, reg_coeff_off)
         history['val_losses'].append(val_loss)
         history['val_accuracies'].append([global_val_acc, local_val_acc])
         history['vec_local_val_accuracy'].append(vec_local_val_acc)
@@ -424,6 +470,7 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
         current_lr = optimizer.param_groups[0]['lr']
 
         print(f"Epoch {epoch+1}/{epochs}: Tr. Loss: {avg_train_loss:.5f}, Val. Loss: {val_loss:.5f}, LR: {current_lr:.6f}")
+        print(f"Reg. Coeff. Diag: {reg_coeff_diag}, Reg. Coeff. Off: {reg_coeff_off}")
         print(f"{'':<11} Tr. Acc.: {global_train_acc}% ({local_train_acc}%), "
               f"Val. Acc.: {global_val_acc}% ({local_val_acc}%)")
         print(f"{'':<11} Vec. Tr. Local Acc.: {vec_local_train_acc}%")
@@ -438,7 +485,7 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
 
     return model, history, test_loader, dict_norms
 
-def evaluate_model(model, dataloader, criterion=nn.MSELoss(), epsilon=1.0,  regularization_coeff=0.0):
+def evaluate_model(model, dataloader, criterion=nn.MSELoss(), epsilon=1.0, reg_coeff_diag=0.1, reg_coeff_off=1.0):
     model.eval()
 
     total_loss = 0.0
@@ -457,7 +504,7 @@ def evaluate_model(model, dataloader, criterion=nn.MSELoss(), epsilon=1.0,  regu
                 num_branches = imgs_batch.shape[1]
                 context_batch = context_batch.unsqueeze(1).expand(-1, num_branches, -1)
             outputs = model(imgs_batch, context_batch)
-            loss = calculate_loss(criterion, outputs, targets, regularization_coeff)
+            loss = calculate_loss(criterion, outputs, targets, reg_coeff_diag, reg_coeff_off)
             
             # Accumulate loss weighted by batch size for proper averaging over all samples
             batch_size = outputs.shape[0]
@@ -825,7 +872,8 @@ def save_results_to_csv(results, filename='Results/model_results.csv'):
             'batch_size':  train_params.get('batch_size', 'N/A'),
             'epochs':  train_params.get('epochs', 'N/A'),
             'learning_rate':  train_params.get('learning_rate', 'N/A'),
-            'regularization_coeff': train_params.get('regularization_coeff', '0'),
+            'reg_coeff_diag': train_params.get('reg_coeff_diag', '0.1'),
+            'reg_coeff_off': train_params.get('reg_coeff_off', '1.0'),
             'criterion': train_params.get('criterion', nn.MSELoss()),
             'epsilon': epsilon,
             'test_accuracy_global': result['global_test_accuracy'],

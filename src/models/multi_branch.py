@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import math
 from torchvision import models
 
 from src.models.img_encoder import CNN, ResNet, ContextEncoder, initialize_weights
@@ -125,7 +126,7 @@ class MultiBranchArchitecture(nn.Module):
     def __init__(self, num_branches=3, name="MBArch", branch_model='resnet18', custom_cnn_layers:list=None, pretrained=True, 
                  filters_per_layer:list=[16,32,64,128], dropout:float=0.5, branch_predicition_head:list=None, context_vector_size=17,
                  pooling_method='spa', num_attention_heads=4, branch_embedding_dim=256, final_prediction_head:list=None, output_size=9,
-                 context_embedding_dim=64, context_hidden_dims=None):
+                 context_embedding_dim=64, context_hidden_dims=None, diagonal_head_config:list=None, off_diagonal_head_config:list=None):
         super(MultiBranchArchitecture, self).__init__()
         self.name = name
         self.num_branches = num_branches
@@ -212,34 +213,115 @@ class MultiBranchArchitecture(nn.Module):
         else:
             raise ValueError(f'Unsupported pooling method: {pooling_method}. Please use:\n - spa for Simple Pooling Attention\n - pma for Pooling by Multi-Head Attention')
         
-        # Final prediction head
-        if final_prediction_head is not None:
-            layers = []
+        # Calculate matrix dimensions from output_size (assuming square matrix)
+        matrix_size = int(math.sqrt(output_size))
+        if matrix_size * matrix_size != output_size:
+            raise ValueError(f"output_size ({output_size}) must be a perfect square for matrix prediction")
+        
+        num_diagonal = matrix_size
+        num_off_diagonal = output_size - num_diagonal
+        
+        # Store these for use in forward method
+        self.matrix_size = matrix_size
+        self.num_diagonal = num_diagonal
+        self.num_off_diagonal = num_off_diagonal
+        self.output_size = output_size
+        
+        # Create two separate prediction heads: one for diagonal, one for off-diagonal elements
+        # Priority: separate configs > shared config > default
+        if diagonal_head_config is not None and off_diagonal_head_config is not None:
+            # Use separate configurations for each head
+            # Diagonal head
+            diag_layers = []
             in_features = branch_embedding_dim
             
             # Build layers based on the provided list
-            for out_features in final_prediction_head[:-1]:  # All layers except the last one
-                layers.extend([
+            for out_features in diagonal_head_config[:-1]:  # All layers except the last one
+                diag_layers.extend([
                     nn.Linear(in_features, out_features),
                     nn.ReLU(inplace=True),
                     nn.Dropout(dropout)
                 ])
                 in_features = out_features
             
-            # Add final layer to match required output size
-            layers.append(nn.Linear(in_features, output_size))
+            # Add final layer for diagonal elements
+            diag_layers.append(nn.Linear(in_features, num_diagonal))
+            self.diagonal_head = nn.Sequential(*diag_layers)
             
-            self.prediction_head = nn.Sequential(*layers)
+            # Off-diagonal head
+            off_diag_layers = []
+            in_features = branch_embedding_dim
+            
+            # Build layers based on the provided list
+            for out_features in off_diagonal_head_config[:-1]:  # All layers except the last one
+                off_diag_layers.extend([
+                    nn.Linear(in_features, out_features),
+                    nn.ReLU(inplace=True),
+                    nn.Dropout(dropout)
+                ])
+                in_features = out_features
+            
+            # Add final layer for off-diagonal elements
+            off_diag_layers.append(nn.Linear(in_features, num_off_diagonal))
+            self.off_diagonal_head = nn.Sequential(*off_diag_layers)
+            
+        elif final_prediction_head is not None:
+            # Use shared configuration for both heads
+            # Diagonal head
+            diag_layers = []
+            in_features = branch_embedding_dim
+            
+            # Build layers based on the provided list
+            for out_features in final_prediction_head[:-1]:  # All layers except the last one
+                diag_layers.extend([
+                    nn.Linear(in_features, out_features),
+                    nn.ReLU(inplace=True),
+                    nn.Dropout(dropout)
+                ])
+                in_features = out_features
+            
+            # Add final layer for diagonal elements
+            diag_layers.append(nn.Linear(in_features, num_diagonal))
+            self.diagonal_head = nn.Sequential(*diag_layers)
+            
+            # Off-diagonal head
+            off_diag_layers = []
+            in_features = branch_embedding_dim
+            
+            # Build layers based on the provided list
+            for out_features in final_prediction_head[:-1]:  # All layers except the last one
+                off_diag_layers.extend([
+                    nn.Linear(in_features, out_features),
+                    nn.ReLU(inplace=True),
+                    nn.Dropout(dropout)
+                ])
+                in_features = out_features
+            
+            # Add final layer for off-diagonal elements
+            off_diag_layers.append(nn.Linear(in_features, num_off_diagonal))
+            self.off_diagonal_head = nn.Sequential(*off_diag_layers)
         else:
             # Default architecture if no custom_head is provided
-            self.prediction_head = nn.Sequential(
-                nn.Linear(branch_embedding_dim, 512), # Q: Should branch output be the same as the output size of the final prediction head after pooling block?
+            # Diagonal head
+            self.diagonal_head = nn.Sequential(
+                nn.Linear(branch_embedding_dim, 512),
                 nn.ReLU(inplace=True),
                 nn.Dropout(dropout),
                 nn.Linear(512, 256),
                 nn.ReLU(inplace=True),
                 nn.Dropout(dropout),
-                nn.Linear(256, output_size)
+                nn.Linear(256, num_diagonal)
+            )
+            
+            # Off-diagonal head
+            self.off_diagonal_head = nn.Sequential(
+                nn.Linear(branch_embedding_dim, 512),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout),
+                nn.Linear(512, 256),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout),
+                nn.Linear(256, num_off_diagonal)
             )
         
         # Initialize all new layers (skip pretrained ResNet/CNN layers)
@@ -253,8 +335,8 @@ class MultiBranchArchitecture(nn.Module):
             if 'context_encoder' in name or 'attention' in name:
                 continue
             
-            # Initialize branch fusion and prediction head with Kaiming (good for ReLU)
-            if 'branch_fusion' in name or 'prediction_head' in name:
+            # Initialize branch fusion and prediction heads with Kaiming (good for ReLU)
+            if 'branch_fusion' in name or 'diagonal_head' in name or 'off_diagonal_head' in name:
                 if isinstance(module, nn.Linear):
                     nn.init.kaiming_uniform_(module.weight, mode='fan_in', nonlinearity='relu')
                     if module.bias is not None:
@@ -321,8 +403,29 @@ class MultiBranchArchitecture(nn.Module):
         else:
             attended_features = self.attention(stacked_outputs)
         
-        # Final prediction
-        output = self.prediction_head(attended_features)
+        # Final prediction using two separate heads
+        diagonal_output = self.diagonal_head(attended_features)  # (batch_size, num_diagonal)
+        off_diagonal_output = self.off_diagonal_head(attended_features)  # (batch_size, num_off_diagonal)
+        
+        # Combine outputs into flattened matrix format
+        # For a matrix of size n, diagonal indices in row-major order are: 0, n+1, 2n+2, ..., (n-1)*n+(n-1)
+        # Off-diagonal indices are all the rest
+        batch_size = diagonal_output.shape[0]
+        output = torch.zeros(batch_size, self.output_size, device=attended_features.device, dtype=attended_features.dtype)
+        
+        # Fill diagonal elements
+        for i in range(self.matrix_size):
+            diag_idx = i * self.matrix_size + i  # Row-major index for diagonal element (i, i)
+            output[:, diag_idx] = diagonal_output[:, i]
+        
+        # Fill off-diagonal elements
+        off_diag_idx = 0
+        for i in range(self.matrix_size):
+            for j in range(self.matrix_size):
+                if i != j:  # Skip diagonal elements
+                    flat_idx = i * self.matrix_size + j  # Row-major index for element (i, j)
+                    output[:, flat_idx] = off_diagonal_output[:, off_diag_idx]
+                    off_diag_idx += 1
         
         if return_attention:
             return output, attention_weights
