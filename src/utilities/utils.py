@@ -903,3 +903,48 @@ def ensure_dir_exists(directory: str) -> None:
     if directory:  # Only create if directory path is not empty
         os.makedirs(directory, exist_ok=True)
 
+def Z_score_transformation(data: np.ndarray) -> tuple[np.ndarray, np.flaot64, np.float64]:
+    """
+    Apply Z-score transformation.
+    
+    Parameters
+    ----------
+    data : np.ndarray
+        Input data of shape (N, features) or any shape
+
+    Returns
+    -------
+        - transformed_data: Z-scored data
+        - mean: Mean of the data
+        - std: Standard deviation of the data
+        
+    """
+    mean = np.mean(data, axis=0, keepdims=True)
+    std = np.std(data, axis=0, keepdims=True)
+    std_safe = np.where(std == 0, 1.0, std)
+    
+    transformed = (data - mean) / std_safe
+    
+    return transformed, mean, std_safe
+
+def Z_score_inverse_transform(transformed_data: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
+    """
+    Reverse the Z-score transformation.
+    
+    Parameters
+    ----------
+    transformed_data : np.ndarray
+        Z-scored data (output from Z_score_transformation)
+    mean : np.ndarray
+        Mean of the data
+    std : np.ndarray
+        Standard deviation of the data
+    
+    Returns
+    -------
+    np.ndarray
+        Reconstructed data
+    """
+    assert transformed_data.shape == mean.shape == std.shape, "Shape mismatch: transformed_data={transformed_data.shape}, mean={mean.shape}, std={std.shape}"
+
+    return transformed_data * std + mean
