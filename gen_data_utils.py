@@ -45,6 +45,7 @@ class QuantumDotModel:
         self, 
         Nconfigurations: int = 10000,
         batch_size: int = 12000, 
+        base_geometry: np.ndarray = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Generates 2D coordinates for Nd dots in batches, ensuring minimum separation.
@@ -56,6 +57,9 @@ class QuantumDotModel:
         batch_size : int
             Number of geometries to generate per batch (should be >= Nconfigurations
             to account for some invalid geometries)
+        base_geometry : np.ndarray, optional
+            Base positions array of shape (Nd, 2). If provided, adds variability
+            around these positions instead of generating randomly.
             
         Returns
         -------
@@ -69,6 +73,9 @@ class QuantumDotModel:
         d_std = self.params.get("d_std_nm", 20.0) * 1e-9
         d_min = self.params.get("d_min_nm", 60.0) * 1e-9
         
+        # Variability parameters for base geometry (can be added to params if needed)
+        geometry_noise_std = self.params.get("geometry_noise_std_nm", 5.0) * 1e-9  # Default 5nm std
+        
         # Pre-allocate output arrays
         all_coords = np.zeros((Nconfigurations, Nd, 2))
         all_distances = np.zeros((Nconfigurations, Nd, Nd))
@@ -79,33 +86,48 @@ class QuantumDotModel:
             # Generate a batch
             coords = np.zeros((batch_size, Nd, 2))
             
-            # Pre-generate all random samples for this batch
-            anchors = []
-            distances = np.zeros((batch_size, Nd - 1))
-            angles = np.zeros((batch_size, Nd - 1))
-            
-            for i in range(1, Nd):
-                anchor_choices = np.random.randint(0, i, size=batch_size)
-                anchors.append(anchor_choices)
+            if base_geometry is not None:
+                # Use base geometry with added variability
+                base_geom_array = np.asarray(base_geometry)
+                if base_geom_array.shape != (Nd, 2):
+                    raise ValueError(f"base_geometry must have shape (Nd, 2) = ({Nd}, 2), got {base_geom_array.shape}")
                 
-                distances[:, i-1] = np.maximum(
-                    d_min, 
-                    np.random.normal(d_mean, d_std, size=batch_size)
+                # Broadcast base_geometry to batch_size and add Gaussian noise
+                # Shape: (batch_size, Nd, 2)
+                coords = base_geom_array[np.newaxis, :, :] + np.random.normal(
+                    0.0, 
+                    geometry_noise_std, 
+                    size=(batch_size, Nd, 2)
                 )
-                angles[:, i-1] = np.random.uniform(0, 2 * np.pi, size=batch_size)
-            
-            # Build coordinates sequentially but vectorized across batch
-            for i in range(1, Nd):
-                anchor_idx = anchors[i-1]
-                d = distances[:, i-1]
-                theta = angles[:, i-1]
+            else:
+                # Original random generation code
+                # Pre-generate all random samples for this batch
+                anchors = []
+                distances = np.zeros((batch_size, Nd - 1))
+                angles = np.zeros((batch_size, Nd - 1))
                 
-                anchor_coords = coords[np.arange(batch_size), anchor_idx]
-                offsets = np.column_stack([
-                    d * np.cos(theta),
-                    d * np.sin(theta)
-                ])
-                coords[:, i] = anchor_coords + offsets
+                for i in range(1, Nd):
+                    anchor_choices = np.random.randint(0, i, size=batch_size)
+                    anchors.append(anchor_choices)
+                    
+                    distances[:, i-1] = np.maximum(
+                        d_min, 
+                        np.random.normal(d_mean, d_std, size=batch_size)
+                    )
+                    angles[:, i-1] = np.random.uniform(0, 2 * np.pi, size=batch_size)
+                
+                # Build coordinates sequentially but vectorized across batch
+                for i in range(1, Nd):
+                    anchor_idx = anchors[i-1]
+                    d = distances[:, i-1]
+                    theta = angles[:, i-1]
+                    
+                    anchor_coords = coords[np.arange(batch_size), anchor_idx]
+                    offsets = np.column_stack([
+                        d * np.cos(theta),
+                        d * np.sin(theta)
+                    ])
+                    coords[:, i] = anchor_coords + offsets
             
             # Vectorized distance checking
             coords_expanded_i = coords[:, :, np.newaxis, :]  # (batch_size, Nd, 1, 2)
@@ -241,8 +263,8 @@ class QuantumDotModel:
                     std_dev = C_m_qq_std * (d_nn_proxy / dist_ij)  # (batch_size,) in Farads
                 else:
                     # Sensor-quantum dot coupling (one of i or j is sensor)
-                    mean = k_m_sq / dist_ij  # (batch_size,) in Farads
-                    std_dev = C_m_sq_std * (d_nn_proxy / dist_ij)  # (batch_size,) in Farads
+                    mean = C_m_sq_mean*(d_nn_proxy / dist_ij)**3  # (batch_size,) in Farads
+                    std_dev = C_m_sq_std * (d_nn_proxy / dist_ij)**3 # (batch_size,) in Farads
                 
                 values = np.maximum(0.0, np.random.normal(mean, std_dev))
                 C_m[:, i, j] = values
