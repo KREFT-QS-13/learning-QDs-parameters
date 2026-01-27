@@ -201,7 +201,7 @@ def tsem(model_config_path:str, num_dps:int=None):
     reg_coeff_diag = confs['train'].get('reg_coeff_diag', 0.1)
     reg_coeff_off = confs['train'].get('reg_coeff_off', 1.0)
 
-    use_normalization = confs['train']['use_normalization']
+    use_scaling = confs['train']['use_scaling']
     use_lr_scheduler = confs['train']['use_lr_scheduler']
     # Determine device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -222,7 +222,7 @@ def tsem(model_config_path:str, num_dps:int=None):
         epsilon=epsilon,
         reg_coeff_diag=reg_coeff_diag,
         reg_coeff_off=reg_coeff_off,
-        use_normalization=use_normalization,
+        use_scaling=use_scaling,
         use_lr_scheduler=use_lr_scheduler
     )
 

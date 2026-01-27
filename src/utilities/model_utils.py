@@ -30,7 +30,7 @@ from src.models.multi_branch import MultiBranchArchitecture
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ----------------------------- TRAINING
-def divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, random_state, device=DEVICE, use_normalization=False):
+def divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, random_state, device=DEVICE, use_scaling=False):
     """
     Split dataset into train/val/test sets and create DataLoaders for MultiBranchArchitecture.
     
@@ -43,11 +43,11 @@ def divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, ra
         test_split: Test split ratio
         random_state: Random state for reproducibility
         device: Device to move tensors to (defaults to DEVICE)
-        use_normalization: Whether to use Z-score normalization
+        use_scaling: Whether to use Z-score normalization
     
     Returns:
         train_loader, val_loader, test_loader: DataLoaders returning (imgs, context, outputs) tuples
-        norm_dict: Dictionary containing the mean and std of the outputs and context for each split
+        stats_dict: Dictionary containing the mean and std of the outputs and context for each split
     """
     # Ensure inputs are torch tensors (should already be, but check for safety)
     if not isinstance(imgs, torch.Tensor):
@@ -74,37 +74,48 @@ def divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, ra
     imgs_val = imgs[val_indices].to(device)
     imgs_test = imgs[test_indices].to(device)
     
-    norm_dict = None
-    if use_normalization:
-        outputs_train, outputs_mean, outputs_std = u.Z_score_transformation(outputs[train_indices].numpy())
-        outputs_val, outputs_mean, outputs_std = u.Z_score_transformation(outputs[val_indices].numpy())
-        outputs_test, outputs_mean, outputs_std = u.Z_score_transformation(outputs[test_indices].numpy())
+    stats_dict = None
+    if use_scaling:
+        print("Using robust scaling for outputs...")
+        outputs_stats = u.robust_scaling_fit(outputs[train_indices].numpy())
+        outputs_train, outputs_stats_train = u.robust_scaling(outputs[train_indices].numpy(), outputs_stats)
+        outputs_val, outputs_stats_val = u.robust_scaling(outputs[val_indices].numpy(), outputs_stats)
+        outputs_test, outputs_stats_test = u.robust_scaling(outputs[test_indices].numpy(), outputs_stats)
         
-        context_train, context_mean, context_std = u.Z_score_transformation(context[train_indices].numpy())
-        context_val, context_mean, context_std = u.Z_score_transformation(context[val_indices].numpy())
-        context_test, context_mean, context_std = u.Z_score_transformation(context[test_indices].numpy())
-
-        norm_dict = {
-            'train': [(outputs_mean, outputs_std), (context_mean, context_std)],
-            'val': [(outputs_mean, outputs_std), (context_mean, context_std)],
-            'test': [(outputs_mean, outputs_std), (context_mean, context_std)]
-        }
+        # context_stats = u.robust_scaling_fit(context[train_indices].numpy())
+        # context_train, context_stats_train = u.robust_scaling(context[train_indices].numpy(), context_stats)
+        # context_val, context_stats_val = u.robust_scaling(context[val_indices].numpy(), context_stats)
+        # context_test, context_stats_test = u.robust_scaling(context[test_indices].numpy(), context_stats)
 
         outputs_train = torch.tensor(outputs_train, dtype=torch.float32).to(device)
         outputs_val = torch.tensor(outputs_val, dtype=torch.float32).to(device)
         outputs_test = torch.tensor(outputs_test, dtype=torch.float32).to(device)
 
-        context_train = torch.tensor(context_train, dtype=torch.float32).to(device)
-        context_val = torch.tensor(context_val, dtype=torch.float32).to(device)
-        context_test = torch.tensor(context_test, dtype=torch.float32).to(device)
+        # context_train = torch.tensor(context_train, dtype=torch.float32).to(device)
+        # context_val = torch.tensor(context_val, dtype=torch.float32).to(device)
+        # context_test = torch.tensor(context_test, dtype=torch.float32).to(device)
+
+        stats_dict = {
+            'outputs': {
+                'train': outputs_stats_train,
+                'val': outputs_stats_val,
+                'test': outputs_stats_test
+            # },
+            # 'context': {
+            #     'train': context_stats_train,
+            #     'val': context_stats_val,
+            #     'test': context_stats_test
+            }
+        }
+
     else:
         outputs_train = outputs[train_indices].to(device)
         outputs_val = outputs[val_indices].to(device)
         outputs_test = outputs[test_indices].to(device)
 
-        context_train = context[train_indices].to(device)
-        context_val = context[val_indices].to(device)
-        context_test = context[test_indices].to(device)
+    context_train = context[train_indices].to(device)
+    context_val = context[val_indices].to(device)
+    context_test = context[test_indices].to(device)
 
     
     # Create DataLoader objects
@@ -118,7 +129,7 @@ def divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, ra
     test_dataset = TensorDataset(imgs_test, context_test, outputs_test)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-    return train_loader, val_loader, test_loader, norm_dict
+    return train_loader, val_loader, test_loader, stats_dict
 
 def calculate_loss(criterion, outputs, targets, reg_coeff_diag=0.1, reg_coeff_off=1.0):
     """
@@ -168,10 +179,10 @@ def calculate_loss(criterion, outputs, targets, reg_coeff_diag=0.1, reg_coeff_of
     
     return loss
 
-def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Tensor, context:torch.Tensor, outputs:torch.Tensor, save_dir:str, batch_size:int, epochs:int, learning_rate:float, val_split:float, test_split:float, random_state:int, epsilon:float, reg_coeff_diag:float, reg_coeff_off:float, use_normalization:bool, use_lr_scheduler:bool):
+def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Tensor, context:torch.Tensor, outputs:torch.Tensor, save_dir:str, batch_size:int, epochs:int, learning_rate:float, val_split:float, test_split:float, random_state:int, epsilon:float, reg_coeff_diag:float, reg_coeff_off:float, use_scaling:bool, use_lr_scheduler:bool):
     """Train, evaluate, and save multiple models based on the given configurations."""
     print("\n\n--------- START TRAINING ---------")
-    trained_model, history, test_loader, norm_dict = train_model(model=model, 
+    trained_model, history, test_loader, stats_dict = train_model(model=model, 
                                                                  imgs=imgs, 
                                                                  context=context, 
                                                                  outputs=outputs, 
@@ -184,7 +195,7 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
                                                                  epsilon=epsilon, 
                                                                  reg_coeff_diag=reg_coeff_diag, 
                                                                  reg_coeff_off=reg_coeff_off, 
-                                                                 use_normalization=use_normalization, 
+                                                                 use_scaling=use_scaling, 
                                                                  use_lr_scheduler=use_lr_scheduler)
         
     # Final test of the model
@@ -302,8 +313,8 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
                 'reg_coeff_diag': reg_coeff_diag,
                 'reg_coeff_off': reg_coeff_off,
                 'init_weights': None, # Add init_weights field
-                'use_normalization': use_normalization,
-                'norm_dict': norm_dict
+                'use_scaling': use_scaling,
+                'stats_dict': stats_dict
             },
             'history': {k: v for k, v in history.items() if k != 'L2 norm'},
             'test_loss': float(test_loss),
@@ -327,7 +338,7 @@ def train_evaluate_and_save_models(model:MultiBranchArchitecture, imgs:torch.Ten
 
 def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learning_rate=0.001, val_split=0.2, 
                 test_split=0.1, random_state=42, epsilon=1.0, init_weights=None, 
-                criterion=nn.MSELoss(), reg_coeff_diag=0.1, reg_coeff_off=1.0, device=DEVICE, use_normalization=False, use_lr_scheduler=False):
+                criterion=nn.MSELoss(), reg_coeff_diag=0.1, reg_coeff_off=1.0, device=DEVICE, use_scaling=False, use_lr_scheduler=False):
     '''
         Train a model on the given data and hyperparameters.
         
@@ -342,7 +353,7 @@ def train_model(model, imgs, context, outputs, batch_size=32, epochs=100, learni
     # move model to GPU
     model = model.to(device)
 
-    train_loader, val_loader, test_loader, dict_norms = divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, random_state, device, use_normalization)
+    train_loader, val_loader, test_loader, dict_norms = divide_dataset(imgs, context, outputs, batch_size, val_split, test_split, random_state, device, use_scaling)
 
     # Define loss function, optimizer and learning rate scheduler
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5) # test also AdamW

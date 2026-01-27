@@ -1,6 +1,7 @@
 import json
 import os, glob
 import numpy as np
+from sklearn.preprocessing import RobustScaler
 from itertools import combinations
 from pathlib import Path
 import matplotlib
@@ -903,48 +904,87 @@ def ensure_dir_exists(directory: str) -> None:
     if directory:  # Only create if directory path is not empty
         os.makedirs(directory, exist_ok=True)
 
-def Z_score_transformation(data: np.ndarray) -> tuple[np.ndarray, np.float64, np.float64]:
+def ensure_2d_array(x: np.ndarray) -> np.ndarray:
     """
-    Apply Z-score transformation.
+    Ensure the array is 2D.
+    """
+    if x.ndim == 1:
+        x = x[:, None]
+    return x
+ 
+def robust_scaling_fit(x: np.ndarray, eps: float = 1e-8) -> dict:
+    """
+    x: array-like, shape (n_samples,) or (n_samples, n_targets)
+    """
+    x= np.asarray(x)
+    if x.ndim == 1:
+        x = x[:, None]
+
+    median = np.median(x, axis=0)
+    q75 = np.percentile(x, 75, axis=0)
+    q25 = np.percentile(x, 25, axis=0)
+    iqr = np.maximum(q75 - q25, eps)
+
+    return {
+        "median": median,
+        "iqr": iqr
+    }
+
+def robust_scaling(x: np.ndarray, stats: dict, verbose: bool = True) -> tuple[np.ndarray, np.float64, np.float64]:
+    """
+    Apply robust scaling transformation.
     
     Parameters
     ----------
-    data : np.ndarray
-        Input data of shape (N, features) or any shape
+    x : np.ndarray
+        Training data of shape (N, features) or any shape
+    stats : dict
+        Statistics of the data: {"median": np.ndarray, "iqr": np.ndarray}
+    verbose : bool, optional
+        Whether to print the statistics (default: True)
 
     Returns
     -------
-        - transformed_data: Z-scored data
-        - mean: Mean of the data
-        - std: Standard deviation of the data
+        - transformed_data: Robust scaled data
+        - stats: Statistics of the data
         
     """
-    mean = np.mean(data, axis=0, keepdims=True)
-    std = np.std(data, axis=0, keepdims=True)
-    std_safe = np.where(std == 0, 1.0, std)
+    x = ensure_2d_array(x)
+    transformed_data = (x - stats['median']) / stats['iqr']
     
-    transformed = (data - mean) / std_safe
-    
-    return transformed, mean, std_safe
+    stats = {'median': stats['median'], 
+             'iqr': stats['iqr'],
+             'mean': np.mean(transformed_data, axis=0), 
+             'std': np.std(transformed_data, axis=0), 
+             'max_abs': np.max(np.abs(transformed_data), axis=0),
+    }
 
-def Z_score_inverse_transform(transformed_data: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
+    if verbose:
+        print("Robust Scaling Statistics: ")
+        print(f"Mean: {stats['mean']}")
+        print(f"Std: {stats['std']}")
+        print(f"Max abs: {stats['max_abs']}")
+        print(f"Median: {stats['median']}")
+        print(f"IQR: {stats['iqr']}\n")
+
+    return transformed_data, stats
+
+def robust_scaling_reverse(x: np.ndarray, stats: dict) -> np.ndarray:
     """
-    Reverse the Z-score transformation.
+    Reverse the robust scaling transformation.
     
     Parameters
     ----------
-    transformed_data : np.ndarray
-        Z-scored data (output from Z_score_transformation)
-    mean : np.ndarray
-        Mean of the data
-    std : np.ndarray
-        Standard deviation of the data
+    x : np.ndarray
+        Robust scaled data (output from robust_scaling)
+    stats : dict
+        Statistics of the data: {"median": np.ndarray, "iqr": np.ndarray}
     
     Returns
     -------
     np.ndarray
-        Reconstructed data
-    """
-    assert transformed_data.shape == mean.shape == std.shape, "Shape mismatch: transformed_data={transformed_data.shape}, mean={mean.shape}, std={std.shape}"
+        Robust scaled data
 
-    return transformed_data * std + mean
+    """
+    x = ensure_2d_array(x)
+    return x * stats['iqr'] + stats['median']
