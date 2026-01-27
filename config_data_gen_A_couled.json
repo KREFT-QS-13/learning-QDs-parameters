@@ -1,19 +1,26 @@
 {
   "system": {
-    "Ndots": 6,
+    "Ndots": 4,
     "Nsensors": 1,
-    "Ngates": 7,
+    "Ngates": 5,
     "n_diamonds_factor": 1.2,
     "resolution": 150
   },
   "geometry": {
-    "d_mean_nm": 75.0,
+    "d_mean_nm": 65.0,
     "d_std_nm": 10.0,
-    "d_min_nm": 55.0
+    "d_min_nm": 55.0,
+    "base_geometry_positions": [
+      [0.0, 1.0],
+      [1.0, 1.0],
+      [0.0, 0.0],
+      [1.0, 0.0],
+      [-1.0, 1.0]
+    ]
   },
   "sensor_config": {
-    "sensor_idx": 6,
-    "sensor_gate_idx": 6
+    "sensor_idx": 4,
+    "sensor_gate_idx": 4
   },
   "parasitic_capacitance": {
     "C0_q_mean": 1.2e-17,
@@ -23,9 +30,9 @@
   },
   "mutual_capacitance": {
     "Cm_qq_mean": 4e-18,
-    "Cm_qq_std": 1e-18,
+    "Cm_qq_std": 0.5e-18,
     "Cm_sq_mean": 2e-18,
-    "Cm_sq_std": 0.5e-18
+    "Cm_sq_std": 0.25e-18
   },
   "gate_capacitance": {
     "C_dg_diag_mean": 9e-18,
@@ -34,7 +41,7 @@
   },
   "tunnel_coupling": {
     "tc_max_meV": 0.65,
-    "d_dot_nm": 23,
+    "d_dot_nm": 20,
     "att_per_nm": 0.1
   },
   "generation": {
@@ -46,7 +53,7 @@
     "sensor_detunings": [1],
     "noise_amplitude": {
       "fast_noise": 4e-5,
-      "slow_noise": 2e-5
+      "slow_noise": 3e-5
         },
     "peak_width_multiplier": 80
   }

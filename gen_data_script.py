@@ -58,6 +58,9 @@ def config_to_params(config: dict) -> dict:
     # Tunnel coupling
     params.update(config['tunnel_coupling'])
     
+    # Geometry
+    params.update(config['geometry'])
+    
     return params
 
 
@@ -69,7 +72,7 @@ def plane_axes_from_pair(pair: tuple, Ng: int) -> np.ndarray:
     return axes
 
 
-def generate_cuts(Ndots: int, Nsensors: int, sensor_gate_idx: int, geometry: np.ndarray = None) -> list:
+def generate_cuts(Ndots: int, Nsensors: int, sensor_gate_idx: int, geometry: np.ndarray = None, base_geometry: np.ndarray = None, nearest_neighbors: bool = False) -> list:
     """
     Generate cuts (combinations of target gates).
     
@@ -97,30 +100,61 @@ def generate_cuts(Ndots: int, Nsensors: int, sensor_gate_idx: int, geometry: np.
     
     # Filter by distance if geometry is provided
     if geometry is not None:
-        geometry = np.asarray(geometry)
-        if geometry.shape[0] != (Ndots + Nsensors):
-            raise ValueError(f"Geometry must have {Ndots + Nsensors} positions, got {geometry.shape[0]}")
-        
-        # Calculate pairwise distances between all dots using vectorized operations
-        # geometry[i] is position of dot i (which corresponds to gate i)
-        # Expand geometry to compute all pairwise differences
-        geometry_expanded_i = geometry[:, np.newaxis, :]  # (Nd, 1, 2)
-        geometry_expanded_j = geometry[np.newaxis, :, :]  # (1, Nd, 2)
-        diff = geometry_expanded_i - geometry_expanded_j  # (Nd, Nd, 2)
-        distances = np.linalg.norm(diff, axis=-1)  # (Nd, Nd)
-        
-        # Calculate average distance (excluding diagonal zeros)
-        mask = ~np.eye(distances.shape[0], dtype=bool)
-        avg_distance = np.mean(distances[mask])
-        max_distance = 1.3 * avg_distance
-        
-        # Filter cuts: only keep pairs where distance < 1.3 * average_distance
-        filtered_cuts = []
-        for gate_i, gate_j in plane_axis_specs:
-            if distances[gate_i, gate_j] < max_distance:
-                filtered_cuts.append((gate_i, gate_j))
-        
-        return filtered_cuts
+        if nearest_neighbors:
+            if base_geometry is None:
+                raise ValueError("base_geometry must be provided when nearest_neighbors=True")
+            
+            base_geometry = np.asarray(base_geometry)
+            if base_geometry.shape[0] != (Ndots + Nsensors):
+                raise ValueError(f"base_geometry must have {Ndots + Nsensors} positions, got {base_geometry.shape[0]}")
+            
+            # Exclude sensor_gate_idx from base_geometry
+            mask = np.arange(Ndots + Nsensors) != sensor_gate_idx
+            filtered_geometry = base_geometry[mask]  # (Nd-1, 2)
+            filtered_indices = np.where(mask)[0]  # Indices of gates that are not sensor_gate_idx
+            
+            # Calculate pairwise distances between filtered positions
+            geometry_expanded_i = filtered_geometry[:, np.newaxis, :]  # (Nd-1, 1, 2)
+            geometry_expanded_j = filtered_geometry[np.newaxis, :, :]  # (1, Nd-1, 2)
+            diff = geometry_expanded_i - geometry_expanded_j  # (Nd-1, Nd-1, 2)
+            distances = np.linalg.norm(diff, axis=-1)  # (Nd-1, Nd-1)
+            print(distances)
+            # Find all pairs separated by exactly distance 1
+            nearest_neighbor_cuts = []
+            for i in range(len(filtered_indices)):
+                for j in range(i + 1, len(filtered_indices)):
+                    if np.isclose(distances[i, j], 1.0):
+                        gate_i = filtered_indices[i]
+                        gate_j = filtered_indices[j]
+                        nearest_neighbor_cuts.append((gate_i, gate_j))
+            print(nearest_neighbor_cuts)
+            return nearest_neighbor_cuts
+
+        else:
+            geometry = np.asarray(geometry)
+            if geometry.shape[0] != (Ndots + Nsensors):
+                raise ValueError(f"Geometry must have {Ndots + Nsensors} positions, got {geometry.shape[0]}")
+            
+            # Calculate pairwise distances between all dots using vectorized operations
+            # geometry[i] is position of dot i (which corresponds to gate i)
+            # Expand geometry to compute all pairwise differences
+            geometry_expanded_i = geometry[:, np.newaxis, :]  # (Nd, 1, 2)
+            geometry_expanded_j = geometry[np.newaxis, :, :]  # (1, Nd, 2)
+            diff = geometry_expanded_i - geometry_expanded_j  # (Nd, Nd, 2)
+            distances = np.linalg.norm(diff, axis=-1)  # (Nd, Nd)
+            
+            # Calculate average distance (excluding diagonal zeros)
+            mask = ~np.eye(distances.shape[0], dtype=bool)
+            avg_distance = np.mean(distances[mask])
+            max_distance = 1.3 * avg_distance
+            
+            # Filter cuts: only keep pairs where distance < 1.3 * average_distance
+            filtered_cuts = []
+            for gate_i, gate_j in plane_axis_specs:
+                if distances[gate_i, gate_j] < max_distance:
+                    filtered_cuts.append((gate_i, gate_j))
+            
+            return filtered_cuts
     
     return plane_axis_specs
 
@@ -145,29 +179,35 @@ def generate_datapoint(
     sensor_gate_idx = config['sensor_config']['sensor_gate_idx']
     n_diamonds_factor = config['system']['n_diamonds_factor']
     resolution = config['system']['resolution']
+
     # Convert config to params
     params = config_to_params(config)
+    base_geometry = np.array(config['geometry']['base_geometry_positions']) 
     
     # Create output directory for this data point
     datapoint_dir = Path(output_dir) / f"datapoint_{datapoint_id:05d}"
     datapoint_dir.mkdir(parents=True, exist_ok=True)
-    
     try:
         # Initialize quantum dot model
         Qdots = QuantumDotModel(Nd, Ngates, params)
         
-
-        base_geometry = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [0.0,2.0],[1., 2.0], [0.,-1.]]) * params['d_mean_nm'] * 1e-9
+    
         # Generate geometry (single configuration)
         all_distances, all_coords = Qdots._generate_dot_distances_2d_batch(
             Nconfigurations=1,
             batch_size=100,
-            base_geometry = base_geometry
+            base_geometry = base_geometry * params['d_mean_nm'] * 1e-9
         )
 
         print(all_coords*1e9)
-        for k in range(all_coords.shape[0]):
+        for k in range(all_coords.shape[1]):
             plt.scatter(all_coords[0, k, 0], all_coords[0, k, 1])
+            circle = plt.Circle(
+                (all_coords[0, k, 0], all_coords[0, k, 1]), 
+                params['d_mean_nm'] * 1e-9, 
+                color='b', fill=False, linewidth=1.5, alpha=0.6
+            )
+            plt.gca().add_patch(circle)
         plt.savefig(datapoint_dir / f"geometry_{k}.png", dpi=150, bbox_inches='tight')
         plt.close() 
         
@@ -233,7 +273,7 @@ def generate_datapoint(
         coulomb_diamond_sizes = get_coulomb_diamond_sizes(C_DG)
         
         # Generate cuts (filtered by distance if geometry is available)
-        cuts = generate_cuts(Ndots, Nsensors, sensor_gate_idx, geometry=geometry)
+        cuts = generate_cuts(Ndots, Nsensors, sensor_gate_idx, geometry=geometry, base_geometry=base_geometry, nearest_neighbors = True)
         Ncuts = len(cuts)
         
         # Store full plane axes arrays

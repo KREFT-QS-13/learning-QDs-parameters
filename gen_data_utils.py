@@ -85,7 +85,6 @@ class QuantumDotModel:
         while n_collected < Nconfigurations:
             # Generate a batch
             coords = np.zeros((batch_size, Nd, 2))
-            
             if base_geometry is not None:
                 # Use base geometry with added variability
                 base_geom_array = np.asarray(base_geometry)
@@ -135,7 +134,6 @@ class QuantumDotModel:
             
             diff = coords_expanded_i - coords_expanded_j  # (batch_size, Nd, Nd, 2)
             pairwise_distances = np.linalg.norm(diff, axis=-1)  # (batch_size, Nd, Nd)
-            
             # Check validity
             identity_mask = np.eye(Nd, dtype=bool)
             valid_pairs = pairwise_distances >= d_min
