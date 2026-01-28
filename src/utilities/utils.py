@@ -633,7 +633,7 @@ def generate_datapoint(
             base_charge_state=base_state,
         )
         
-        v_offset = -np.sum(transition_vectors, axis=0)  # (Ng,)
+        v_offset = -np.sum(transition_vectors, axis=0)*0.8  # (Ng,)
         
         # Get coulomb diamond sizes
         coulomb_diamond_sizes = get_coulomb_diamond_sizes(C_DG)
@@ -650,6 +650,7 @@ def generate_datapoint(
         
         # Process each cut
         for cut_idx, cut_pair in enumerate(cuts):
+            
             axes = plane_axes_from_pair(cut_pair, Ngates)
             cuts_axes.append(axes)  # Store full axes array
             span_x = coulomb_diamond_sizes[cut_pair[0]]
@@ -662,8 +663,8 @@ def generate_datapoint(
 
             x_overhead = span_x * np.random.normal(0, 0.05)/2
             y_overhead = span_y * np.random.normal(0, 0.05)/2
-            x_voltages = np.linspace(-0.2 * span_x - x_overhead, n_diamonds_factor * span_x + x_overhead, resolution)
-            y_voltages = np.linspace(-0.2 * span_y - y_overhead, n_diamonds_factor * span_y + y_overhead, resolution)
+            x_voltages = np.linspace(-0.1 * span_x - x_overhead, n_diamonds_factor * span_x + x_overhead, resolution)
+            y_voltages = np.linspace(-0.1 * span_y - y_overhead, n_diamonds_factor * span_y + y_overhead, resolution)
             
             
             # Generate CSD
