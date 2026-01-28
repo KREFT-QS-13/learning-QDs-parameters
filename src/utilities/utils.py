@@ -205,6 +205,7 @@ class QuantumDotModel:
             self.params["C_dg_diag_std"],
             size=(batch_size, Nd)
         )
+     
         diag_base_values = np.maximum(0.0, diag_base_values)
         
         # Set diagonal elements (geometric factor = 1 for d_nm = 0)
@@ -219,10 +220,11 @@ class QuantumDotModel:
                     # Use distance from dot i to dot j as proxy for dot-gate distance
                     dist_ij_nm = dot_distances_batch[:, i, j] * 1e9  # Convert to nanometers
                     # Geometric model: 50/(sqrt(50^2 + d_nm^2))
-                    geometric_factor = (30.0**2 / (30.0**2 + dist_ij_nm**2))**1.5
+                    geometric_factor = (self.params["geometric_decay_nm"]**2 / (self.params["geometric_decay_nm"]**2 + dist_ij_nm**2))**1.5
                     # Scale the diagonal base value by geometric factor
                     mean = diag_base_values[:, i] * geometric_factor
                     std_dev = self.params["C_dg_diag_std"] * geometric_factor
+              
                     C_tilde_DG[:, i, j] = np.maximum(0.0, np.random.normal(mean, std_dev))
         
         # --- 2. Enforce Sensor Constraints ---
@@ -315,7 +317,7 @@ class QuantumDotModel:
         # --- 6. Derive Canonical C_tilde_DD ---
         C_tilde_DD = C_m.copy()
         for i in range(Nd):
-            C_tilde_DD[:, i, i] = np.sum(C_DD[:, i, :], axis=1)
+            C_tilde_DD[:, i, i] = C_DD[:, i, i]
         
         # --- 7. Derive Tunnel Couplings (tc) with new formula ---
         # New formula: tc = tc_max * exp(-att_per_nm * (d - d_min))
@@ -633,7 +635,8 @@ def generate_datapoint(
             base_charge_state=base_state,
         )
         
-        v_offset = -np.sum(transition_vectors, axis=0)*0.8  # (Ng,)
+        v_offset_base = -np.sum(transition_vectors, axis=0) * 0.8  # (Ng,)
+        print("v_offset_base: ", v_offset_base)
         
         # Get coulomb diamond sizes
         coulomb_diamond_sizes = get_coulomb_diamond_sizes(C_DG)
@@ -650,7 +653,10 @@ def generate_datapoint(
         
         # Process each cut
         for cut_idx, cut_pair in enumerate(cuts):
-            
+            v_offset = v_offset_base.copy()
+         
+
+
             axes = plane_axes_from_pair(cut_pair, Ngates)
             cuts_axes.append(axes)  # Store full axes array
             span_x = coulomb_diamond_sizes[cut_pair[0]]
@@ -661,10 +667,10 @@ def generate_datapoint(
 
 
 
-            x_overhead = span_x * np.random.normal(0, 0.05)/2
-            y_overhead = span_y * np.random.normal(0, 0.05)/2
-            x_voltages = np.linspace(-0.1 * span_x - x_overhead, n_diamonds_factor * span_x + x_overhead, resolution)
-            y_voltages = np.linspace(-0.1 * span_y - y_overhead, n_diamonds_factor * span_y + y_overhead, resolution)
+            x_overhead = span_x * np.random.normal(0, 0.1)/2
+            y_overhead = span_y * np.random.normal(0, 0.1)/2
+            x_voltages = np.linspace(-0.20 * span_x - x_overhead, n_diamonds_factor * span_x + x_overhead, resolution)
+            y_voltages = np.linspace(-0.20 * span_y - y_overhead, n_diamonds_factor * span_y + y_overhead, resolution)
             
             
             # Generate CSD
@@ -688,7 +694,7 @@ def generate_datapoint(
                     sensor_values[:, :, 0].T,
                     cmap='viridis'
                 )
-                #plot_polytopes(ax, polytopes, axes_rescale=1e3)
+                #plot_polytopes(ax, polytopes, axes_rescale=1e3, fontsize = 3)
                 #ax.set_xlabel(f'Gate {cut_pair[0]} Voltage (mV)')
                 #ax.set_ylabel(f'Gate {cut_pair[1]} Voltage (mV)')
                 #ax.set_title(f'Cut {cut_str}')
