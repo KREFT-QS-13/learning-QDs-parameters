@@ -317,7 +317,7 @@ class QuantumDotModel:
         # --- 6. Derive Canonical C_tilde_DD ---
         C_tilde_DD = C_m.copy()
         for i in range(Nd):
-            C_tilde_DD[:, i, i] = C_DD[:, i, i]
+            C_tilde_DD[:, i, i] = C_d0[:, i]
         
         # --- 7. Derive Tunnel Couplings (tc) with new formula ---
         # New formula: tc = tc_max * exp(-att_per_nm * (d - d_min))
