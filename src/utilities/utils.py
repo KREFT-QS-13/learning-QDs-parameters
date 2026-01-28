@@ -48,6 +48,7 @@ class QuantumDotModel:
         self, 
         Nconfigurations: int = 10000,
         batch_size: int = 12000, 
+        base_geometry: np.ndarray = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Generates 2D coordinates for Nd dots in batches, ensuring minimum separation.
@@ -59,7 +60,9 @@ class QuantumDotModel:
         batch_size : int
             Number of geometries to generate per batch (should be >= Nconfigurations
             to account for some invalid geometries)
-            
+        base_geometry : np.ndarray, optional
+            Base positions array of shape (Nd, 2). If provided, adds variability
+            around these positions instead of generating randomly.
         Returns
         -------
         tuple[np.ndarray, np.ndarray]
@@ -71,7 +74,7 @@ class QuantumDotModel:
         d_mean = self.params.get("d_mean_nm", 100.0) * 1e-9
         d_std = self.params.get("d_std_nm", 20.0) * 1e-9
         d_min = self.params.get("d_min_nm", 60.0) * 1e-9
-        
+        geometry_noise_std = self.params.get("geometry_noise_std_nm", 5.0) * 1e-9
         # Pre-allocate output arrays
         all_coords = np.zeros((Nconfigurations, Nd, 2))
         all_distances = np.zeros((Nconfigurations, Nd, Nd))
@@ -81,34 +84,49 @@ class QuantumDotModel:
         while n_collected < Nconfigurations:
             # Generate a batch
             coords = np.zeros((batch_size, Nd, 2))
-            
-            # Pre-generate all random samples for this batch
-            anchors = []
-            distances = np.zeros((batch_size, Nd - 1))
-            angles = np.zeros((batch_size, Nd - 1))
-            
-            for i in range(1, Nd):
-                anchor_choices = np.random.randint(0, i, size=batch_size)
-                anchors.append(anchor_choices)
+            if base_geometry is not None:
+                # Use base geometry with added variability
+                base_geom_array = np.asarray(base_geometry)
+                if base_geom_array.shape != (Nd, 2):
+                    raise ValueError(f"base_geometry must have shape (Nd, 2) = ({Nd}, 2), got {base_geom_array.shape}")
                 
-                distances[:, i-1] = np.maximum(
-                    d_min, 
-                    np.random.normal(d_mean, d_std, size=batch_size)
+                # Broadcast base_geometry to batch_size and add Gaussian noise
+                # Shape: (batch_size, Nd, 2)
+                coords = base_geom_array[np.newaxis, :, :] + np.random.normal(
+                    0.0, 
+                    geometry_noise_std, 
+                    size=(batch_size, Nd, 2)
                 )
-                angles[:, i-1] = np.random.uniform(0, 2 * np.pi, size=batch_size)
-            
-            # Build coordinates sequentially but vectorized across batch
-            for i in range(1, Nd):
-                anchor_idx = anchors[i-1]
-                d = distances[:, i-1]
-                theta = angles[:, i-1]
+            else:
+                # Original random generation code
+                # Pre-generate all random samples for this batch
+                anchors = []
+                distances = np.zeros((batch_size, Nd - 1))
+                angles = np.zeros((batch_size, Nd - 1))
                 
-                anchor_coords = coords[np.arange(batch_size), anchor_idx]
-                offsets = np.column_stack([
-                    d * np.cos(theta),
-                    d * np.sin(theta)
-                ])
-                coords[:, i] = anchor_coords + offsets
+                for i in range(1, Nd):
+                    anchor_choices = np.random.randint(0, i, size=batch_size)
+                    anchors.append(anchor_choices)
+                    
+                    distances[:, i-1] = np.maximum(
+                        d_min, 
+                        np.random.normal(d_mean, d_std, size=batch_size)
+                    )
+                    angles[:, i-1] = np.random.uniform(0, 2 * np.pi, size=batch_size)
+                
+                # Build coordinates sequentially but vectorized across batch
+                for i in range(1, Nd):
+                    anchor_idx = anchors[i-1]
+                    d = distances[:, i-1]
+                    theta = angles[:, i-1]
+                    
+                    anchor_coords = coords[np.arange(batch_size), anchor_idx]
+                    offsets = np.column_stack([
+                        d * np.cos(theta),
+                        d * np.sin(theta)
+                    ])
+                    coords[:, i] = anchor_coords + offsets
+            
             
             # Vectorized distance checking
             coords_expanded_i = coords[:, :, np.newaxis, :]  # (batch_size, Nd, 1, 2)
@@ -242,8 +260,8 @@ class QuantumDotModel:
                     std_dev = C_m_qq_std * (d_nn_proxy / dist_ij)  # (batch_size,) in Farads
                 else:
                     # Sensor-quantum dot coupling (one of i or j is sensor)
-                    mean = k_m_sq / dist_ij  # (batch_size,) in Farads
-                    std_dev = C_m_sq_std * (d_nn_proxy / dist_ij)  # (batch_size,) in Farads
+                    mean = C_m_sq_mean*(d_nn_proxy / dist_ij)**3  # (batch_size,) in Farads
+                    std_dev = C_m_sq_std * (d_nn_proxy / dist_ij)**3 # (batch_size,) in Farads
                 
                 values = np.maximum(0.0, np.random.normal(mean, std_dev))
                 C_m[:, i, j] = values
@@ -418,6 +436,8 @@ def config_to_params(config: dict) -> dict:
     
     # Tunnel coupling
     params.update(config['tunnel_coupling'])
+
+    params.update(config['geometry'])
     
     return params
 
@@ -430,11 +450,90 @@ def plane_axes_from_pair(pair: tuple, Ng: int) -> np.ndarray:
     return axes
 
 
-def generate_cuts(Ndots: int, Nsensors: int, sensor_gate_idx: int) -> list:
-    """Generate all possible cuts (combinations of target gates)."""
+def generate_cuts(Ndots: int, Nsensors: int, sensor_gate_idx: int, geometry: np.ndarray = None, base_geometry: np.ndarray = None, nearest_neighbors: bool = False) -> list:
+    """
+    Generate cuts (combinations of target gates).
+    
+    If geometry is provided, only includes cuts between dots separated by less than 1.3 * average distance.
+    
+    Parameters
+    ----------
+    Ndots : int
+        Number of quantum dots
+    Nsensors : int
+        Number of sensors
+    sensor_gate_idx : int
+        Index of the sensor gate (to exclude from cuts)
+    geometry : np.ndarray, optional
+        Array of shape (Nd, 2) with dot positions. If provided, filters cuts by distance.
+        
+    Returns
+    -------
+    list
+        List of tuples (gate_i, gate_j) representing valid cuts
+    """
     # Target gates exclude the sensor gate
     target_gate_indices = [idx for idx in range(Ndots + Nsensors) if idx != sensor_gate_idx]
     plane_axis_specs = list(combinations(target_gate_indices, 2))
+    
+    # Filter by distance if geometry is provided
+    if geometry is not None:
+        if nearest_neighbors:
+            if base_geometry is None:
+                raise ValueError("base_geometry must be provided when nearest_neighbors=True")
+            
+            base_geometry = np.asarray(base_geometry)
+            if base_geometry.shape[0] != (Ndots + Nsensors):
+                raise ValueError(f"base_geometry must have {Ndots + Nsensors} positions, got {base_geometry.shape[0]}")
+            
+            # Exclude sensor_gate_idx from base_geometry
+            mask = np.arange(Ndots + Nsensors) != sensor_gate_idx
+            filtered_geometry = base_geometry[mask]  # (Nd-1, 2)
+            filtered_indices = np.where(mask)[0]  # Indices of gates that are not sensor_gate_idx
+            
+            # Calculate pairwise distances between filtered positions
+            geometry_expanded_i = filtered_geometry[:, np.newaxis, :]  # (Nd-1, 1, 2)
+            geometry_expanded_j = filtered_geometry[np.newaxis, :, :]  # (1, Nd-1, 2)
+            diff = geometry_expanded_i - geometry_expanded_j  # (Nd-1, Nd-1, 2)
+            distances = np.linalg.norm(diff, axis=-1)  # (Nd-1, Nd-1)
+            print(distances)
+            # Find all pairs separated by exactly distance 1
+            nearest_neighbor_cuts = []
+            for i in range(len(filtered_indices)):
+                for j in range(i + 1, len(filtered_indices)):
+                    if np.isclose(distances[i, j], 1.0):
+                        gate_i = filtered_indices[i]
+                        gate_j = filtered_indices[j]
+                        nearest_neighbor_cuts.append((gate_i, gate_j))
+            print(nearest_neighbor_cuts)
+            return nearest_neighbor_cuts
+
+        else:
+            geometry = np.asarray(geometry)
+            if geometry.shape[0] != (Ndots + Nsensors):
+                raise ValueError(f"Geometry must have {Ndots + Nsensors} positions, got {geometry.shape[0]}")
+            
+            # Calculate pairwise distances between all dots using vectorized operations
+            # geometry[i] is position of dot i (which corresponds to gate i)
+            # Expand geometry to compute all pairwise differences
+            geometry_expanded_i = geometry[:, np.newaxis, :]  # (Nd, 1, 2)
+            geometry_expanded_j = geometry[np.newaxis, :, :]  # (1, Nd, 2)
+            diff = geometry_expanded_i - geometry_expanded_j  # (Nd, Nd, 2)
+            distances = np.linalg.norm(diff, axis=-1)  # (Nd, Nd)
+            
+            # Calculate average distance (excluding diagonal zeros)
+            mask = ~np.eye(distances.shape[0], dtype=bool)
+            avg_distance = np.mean(distances[mask])
+            max_distance = 1.3 * avg_distance
+            
+            # Filter cuts: only keep pairs where distance < 1.3 * average_distance
+            filtered_cuts = []
+            for gate_i, gate_j in plane_axis_specs:
+                if distances[gate_i, gate_j] < max_distance:
+                    filtered_cuts.append((gate_i, gate_j))
+            
+            return filtered_cuts
+    
     return plane_axis_specs
 
 
@@ -459,6 +558,8 @@ def generate_datapoint(
     n_diamonds_factor = config['system']['n_diamonds_factor']
     resolution = config['system']['resolution']
     num_realizations = config['CSD_generation']['number_of_realizations']
+    base_geometry = np.array(config['geometry']['base_geometry_positions']) 
+    nearest_neighbors = config['CSD_generation']['nearest_neighbors']
     # Convert config to params
     params = config_to_params(config)
     
@@ -473,7 +574,8 @@ def generate_datapoint(
         # Generate geometry (single configuration)
         all_distances, all_coords = Qdots._generate_dot_distances_2d_batch(
             Nconfigurations=1,
-            batch_size=100
+            batch_size=100,
+            base_geometry = base_geometry * params['d_mean_nm'] * 1e-9
         )
         
         # Generate capacitance data
@@ -537,7 +639,7 @@ def generate_datapoint(
         coulomb_diamond_sizes = get_coulomb_diamond_sizes(C_DG)
         
         # Generate cuts
-        cuts = generate_cuts(Ndots, Nsensors, sensor_gate_idx)
+        cuts = generate_cuts(Ndots, Nsensors, sensor_gate_idx, base_geometry=base_geometry, nearest_neighbors=nearest_neighbors)
         Ncuts = len(cuts)
         
         # Store full plane axes arrays
@@ -554,8 +656,15 @@ def generate_datapoint(
             span_y = coulomb_diamond_sizes[cut_pair[1]]
             
             # Generate voltage ranges
-            x_voltages = np.linspace(-0.4 * span_x, n_diamonds_factor * span_x, resolution)
-            y_voltages = np.linspace(-0.4 * span_y, n_diamonds_factor * span_y, resolution)
+
+
+
+
+            x_overhead = span_x * np.random.normal(0, 0.05)/2
+            y_overhead = span_y * np.random.normal(0, 0.05)/2
+            x_voltages = np.linspace(-0.2 * span_x - x_overhead, n_diamonds_factor * span_x + x_overhead, resolution)
+            y_voltages = np.linspace(-0.2 * span_y - y_overhead, n_diamonds_factor * span_y + y_overhead, resolution)
+            
             
             # Generate CSD
             xout, yout, _, polytopes, sensor_values, _ = experiment.generate_CSD(
@@ -596,8 +705,8 @@ def generate_datapoint(
         for cut_idx, cut_pair in enumerate(cuts):
             span_x = coulomb_diamond_sizes[cut_pair[0]]
             span_y = coulomb_diamond_sizes[cut_pair[1]]
-            x_voltage_params[cut_idx] = [-0.4 * span_x, 2.1 * span_x, resolution]
-            y_voltage_params[cut_idx] = [-0.4 * span_y, 2.1 * span_y, resolution]
+            x_voltage_params[cut_idx] = [x_voltages[0], x_voltages[-1], resolution]
+            y_voltage_params[cut_idx] = [y_voltages[0], y_voltages[-1], resolution]
         
         # Convert cuts_axes to numpy array: (Ncuts, 2, Ng)
         cuts_axes_array = np.array(cuts_axes)  # (Ncuts, 2, Ng)
