@@ -283,7 +283,9 @@ class QuantumDotModel:
         for i in range(sensor_idx):
             C_d0[:, i] = np.maximum(0.0, np.random.normal(C0_q_mean, C0_q_std, size=batch_size))
         # Generate for sensor dot
+        
         C_d0[:, sensor_idx] = np.maximum(0.0, np.random.normal(C0_s_mean, C0_s_std, size=batch_size))
+        print(C_d0)
         # --- 4. Build the Full C_DD Matrix (Maxwell Matrix) ---
         C_DD = np.zeros((batch_size, Nd, Nd))
         C_cap_to_all_gates = np.sum(C_DG, axis=2)  # (batch_size, Nd)
@@ -318,7 +320,7 @@ class QuantumDotModel:
         C_tilde_DD = C_m.copy()
         for i in range(Nd):
             C_tilde_DD[:, i, i] = C_d0[:, i]
-        
+        print(C_tilde_DD)
         # --- 7. Derive Tunnel Couplings (tc) with new formula ---
         # New formula: tc = tc_max * exp(-att_per_nm * (d - d_min))
         tc_meV = np.zeros((batch_size, Nd, Nd))
@@ -635,7 +637,9 @@ def generate_datapoint(
             base_charge_state=base_state,
         )
         
-        v_offset_base = -np.sum(transition_vectors, axis=0) * 0.8  # (Ng,)
+        v_offset_base = -np.sum(transition_vectors, axis=0) * 0.5  # (Ng,)
+
+        #v_offset_base[-1] = v_offset_base[-1]
         print("v_offset_base: ", v_offset_base)
         
         # Get coulomb diamond sizes
@@ -669,8 +673,8 @@ def generate_datapoint(
 
             x_overhead = span_x * np.random.normal(0, 0.1)/2
             y_overhead = span_y * np.random.normal(0, 0.1)/2
-            x_voltages = np.linspace(-0.20 * span_x - x_overhead, n_diamonds_factor * span_x + x_overhead, resolution)
-            y_voltages = np.linspace(-0.20 * span_y - y_overhead, n_diamonds_factor * span_y + y_overhead, resolution)
+            x_voltages = np.linspace(-0.15 * span_x - x_overhead, n_diamonds_factor * span_x + x_overhead, resolution)
+            y_voltages = np.linspace(-0.15 * span_y - y_overhead, n_diamonds_factor * span_y + y_overhead, resolution)
             
             
             # Generate CSD
