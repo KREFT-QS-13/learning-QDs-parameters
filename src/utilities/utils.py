@@ -645,8 +645,9 @@ def generate_datapoint(
         # Get coulomb diamond sizes
         coulomb_diamond_sizes = get_coulomb_diamond_sizes(C_DG)
         
-        # Generate cuts
-        cuts = generate_cuts(Ndots, Nsensors, sensor_gate_idx, base_geometry=base_geometry, nearest_neighbors=nearest_neighbors)
+        # Generate cuts. When nearest_neighbors=True we must pass geometry so the
+        geometry_for_cuts = base_geometry if nearest_neighbors else None
+        cuts = generate_cuts(Ndots, Nsensors, sensor_gate_idx, geometry=geometry_for_cuts, base_geometry=base_geometry, nearest_neighbors=nearest_neighbors)
         Ncuts = len(cuts)
         
         # Store full plane axes arrays

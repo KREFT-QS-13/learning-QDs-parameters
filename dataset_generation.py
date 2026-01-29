@@ -39,8 +39,7 @@ def process_single_config(config_path: str, num_samples: int = 5):
     path_to_end_folder = config["CSD_generation"].get("path_to_end_folder", "datasets/")
     folder_name =  f'{system_name}__{count_umber_of_folders(path_to_end_folder, system_name)+1}'
     
-    # Override number_of_realizations with num_samples
-    Number_of_realizations = num_samples
+    Number_of_realizations = config["CSD_generation"]["number_of_realizations"]
 
     # Create the main system folder at the start
     system_folder_path = os.path.join(path_to_end_folder, folder_name)
@@ -91,8 +90,8 @@ def main():
                        help='Path to a single config file. If not provided, processes all JSON files in configs/')
     parser.add_argument('--configs-dir', type=str, default='configs',
                        help='Directory containing config files (default: configs)')
-    parser.add_argument('--num-samples', type=int, default=5,
-                       help='Number of samples to generate per config file (default: 5)')
+    parser.add_argument('--num-samples', type=int, default=None,
+                       help='Number of samples per config. If omitted, uses config["CSD_generation"]["number_of_realizations"] (default there: 5)')
 
     args = parser.parse_args()
     
